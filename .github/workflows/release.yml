@@ -77,11 +77,15 @@ jobs:
           name: venc-maruko
           path: release/maruko
 
-      - name: Prepare release assets
+      - name: Prepare release archives
         run: |
-          mv release/star6e/venc release/venc-star6e
-          mv release/maruko/venc release/venc-maruko
-          chmod +x release/venc-star6e release/venc-maruko
+          for backend in star6e maruko; do
+            mkdir -p "release/venc-${backend}"
+            mv "release/${backend}/venc" "release/venc-${backend}/venc"
+            cp star6e-standalone/config/venc.default.json "release/venc-${backend}/venc.json"
+            chmod +x "release/venc-${backend}/venc"
+            tar -czf "release/venc-${backend}.tar.gz" -C release "venc-${backend}"
+          done
 
       - name: Read version
         id: version
@@ -100,15 +104,18 @@ jobs:
 
             ## Binaries
 
-            | File | Backend | SoC |
-            |------|---------|-----|
-            | `venc-star6e` | Star6E | SSC30KQ / SSC338Q (Infinity6E) |
-            | `venc-maruko` | Maruko | SSC378QE (Infinity6C) |
+            | File | Backend | SoC | Contents |
+            |------|---------|-----|----------|
+            | `venc-star6e.tar.gz` | Star6E | SSC30KQ / SSC338Q (Infinity6E) | `venc` + `venc.json` |
+            | `venc-maruko.tar.gz` | Maruko | SSC378QE (Infinity6C) | `venc` + `venc.json` |
+
+            Each archive contains the binary and default config (`venc.json`).
+            Copy `venc.json` to `/etc/venc.json` on the device.
 
             See [README](https://github.com/${{ github.repository }}/blob/master/README.md) for usage.
           files: |
-            release/venc-star6e
-            release/venc-maruko
+            release/venc-star6e.tar.gz
+            release/venc-maruko.tar.gz
           prerelease: false
           make_latest: true
 
