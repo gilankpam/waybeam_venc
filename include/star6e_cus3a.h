@@ -14,6 +14,7 @@ typedef struct {
 	uint32_t gain_max;         /* maximum sensor gain (default 20480 = 20x) */
 	uint32_t shutter_min_us;   /* minimum shutter time (default 150us) */
 	uint32_t shutter_max_us;   /* 0 = auto from sensor_fps */
+	int      verbose;          /* enable periodic status logging */
 } Star6eCus3aConfig;
 
 /** Fill config with sensible FPV defaults. */

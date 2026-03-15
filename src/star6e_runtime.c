@@ -197,6 +197,7 @@ static void start_custom_ae(const Star6ePipelineState *ps,
 		ae_cfg.change_pct = vcfg->isp.ae_change_pct;
 	if (vcfg->isp.ae_gain_max > 0)
 		ae_cfg.gain_max = vcfg->isp.ae_gain_max;
+	ae_cfg.verbose = vcfg->system.verbose;
 	star6e_cus3a_start(&ae_cfg);
 }
 /* Reduce ch1 bitrate by 10%.  Mirrors apply_bitrate() from

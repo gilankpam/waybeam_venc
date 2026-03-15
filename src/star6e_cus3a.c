@@ -438,17 +438,20 @@ static void *cus3a_thread(void *arg)
 	if (s->fn_ae_set_state) {
 		int pause = CUS3A_ISP_STATE_PAUSE;
 		int ret = s->fn_ae_set_state(0, &pause);
-		printf("[cus3a] ISP AE pause request (ret=%d)\n", ret);
+		if (s->cfg.verbose)
+			printf("[cus3a] ISP AE pause request (ret=%d)\n", ret);
 	}
 
 	/* Verify ISP AE is actually paused */
 	if (s->fn_ae_get_state) {
 		int state = -1;
 		int ret = s->fn_ae_get_state(0, &state);
-		printf("[cus3a] ISP AE state after pause: %s (raw=%d, ret=%d)\n",
-			state == CUS3A_ISP_STATE_PAUSE ? "PAUSED" :
-			state == CUS3A_ISP_STATE_NORMAL ? "NORMAL(!)" :
-			"UNKNOWN", state, ret);
+		if (s->cfg.verbose)
+			printf("[cus3a] ISP AE state after pause: %s "
+				"(raw=%d, ret=%d)\n",
+				state == CUS3A_ISP_STATE_PAUSE ? "PAUSED" :
+				state == CUS3A_ISP_STATE_NORMAL ? "NORMAL(!)" :
+				"UNKNOWN", state, ret);
 		if (state != CUS3A_ISP_STATE_PAUSE)
 			fprintf(stderr, "[cus3a] WARNING: ISP AE did not pause "
 				"— internal AE may override custom AE\n");
@@ -458,18 +461,22 @@ static void *cus3a_thread(void *arg)
 	if (have_awb && s->fn_cus3a_enable) {
 		int p100[13] = {1, 0, 0};
 		int ret = s->fn_cus3a_enable(0, p100);
-		printf("[cus3a] CUS3A AWB/AF disabled (ret=%d)\n", ret);
+		if (s->cfg.verbose)
+			printf("[cus3a] CUS3A AWB/AF disabled (ret=%d)\n",
+				ret);
 	}
 
 	sleep_ms = s->cfg.ae_fps > 0 ? 1000 / s->cfg.ae_fps : 66;
 	if (sleep_ms < 1)
 		sleep_ms = 1;
-	printf("[cus3a] thread started: %u Hz, target Y %d-%d, "
-		"gain %u-%u, shutter %u-%uus, step %d%%, awb=%s\n",
-		s->cfg.ae_fps, s->cfg.target_y_low, s->cfg.target_y_high,
-		s->cfg.gain_min, s->cfg.gain_max,
-		s->cfg.shutter_min_us, compute_max_shutter(&s->cfg),
-		s->cfg.change_pct, have_awb ? "on" : "off");
+	if (s->cfg.verbose)
+		printf("[cus3a] thread started: %u Hz, target Y %d-%d, "
+			"gain %u-%u, shutter %u-%uus, step %d%%, awb=%s\n",
+			s->cfg.ae_fps, s->cfg.target_y_low,
+			s->cfg.target_y_high,
+			s->cfg.gain_min, s->cfg.gain_max,
+			s->cfg.shutter_min_us, compute_max_shutter(&s->cfg),
+			s->cfg.change_pct, have_awb ? "on" : "off");
 
 	while (s->running) {
 		/* Wait for frame boundary or sleep */
@@ -489,7 +496,7 @@ static void *cus3a_thread(void *arg)
 		if (s->fn_get_ae_status(0, &ae_info) != 0)
 			goto next;
 
-		if (frames < 3) {
+		if (s->cfg.verbose && frames < 3) {
 			printf("[cus3a] AeInfo: Shutter=%u SensorGain=%u "
 				"IspGain=%u AvgBlkX=%u AvgBlkY=%u\n",
 				ae_info.Shutter, ae_info.SensorGain,
@@ -514,7 +521,7 @@ static void *cus3a_thread(void *arg)
 					last_awb_r = awb_info.CurRGain;
 					last_awb_g = awb_info.CurGGain;
 					last_awb_b = awb_info.CurBGain;
-					if (frames < 3) {
+					if (s->cfg.verbose && frames < 3) {
 						printf("[cus3a] AwbInfo: "
 							"R=%u G=%u B=%u\n",
 							last_awb_r,
@@ -544,22 +551,27 @@ static void *cus3a_thread(void *arg)
 			now_ms = ts.tv_sec * 1000UL + ts.tv_nsec / 1000000;
 			if (now_ms - last_log_ms >= 5000) {
 				int ae_state = -1;
-				const char *state_str = "?";
-				if (s->fn_ae_get_state) {
+				if (s->fn_ae_get_state)
 					s->fn_ae_get_state(0, &ae_state);
-					state_str = ae_state ==
-						CUS3A_ISP_STATE_PAUSE ?
-						"paused" : "ACTIVE(!)";
+				if (s->cfg.verbose) {
+					const char *state_str =
+						ae_state == CUS3A_ISP_STATE_PAUSE ?
+						"paused" : ae_state ==
+						CUS3A_ISP_STATE_NORMAL ?
+						"ACTIVE(!)" : "?";
+					printf("[cus3a] %lu frames, ae=%lu "
+						"awb=%lu, shutter=%uus "
+						"gain=%u avgY=%u "
+						"wb=R%u/G%u/B%u "
+						"isp_ae=%s\n",
+						frames, ae_changes,
+						awb_changes,
+						ae_result.Shutter,
+						ae_result.SensorGain,
+						ae_result.AvgY,
+						last_awb_r, last_awb_g,
+						last_awb_b, state_str);
 				}
-				printf("[cus3a] %lu frames, ae=%lu awb=%lu, "
-					"shutter=%uus gain=%u avgY=%u "
-					"wb=R%u/G%u/B%u isp_ae=%s\n",
-					frames, ae_changes, awb_changes,
-					ae_result.Shutter,
-					ae_result.SensorGain,
-					ae_result.AvgY,
-					last_awb_r, last_awb_g, last_awb_b,
-					state_str);
 				/* Re-pause if something re-enabled ISP AE */
 				if (ae_state == CUS3A_ISP_STATE_NORMAL &&
 				    s->fn_ae_set_state) {
@@ -583,14 +595,16 @@ next:
 	if (s->fn_ae_set_state) {
 		int normal = CUS3A_ISP_STATE_NORMAL;
 		s->fn_ae_set_state(0, &normal);
-		printf("[cus3a] ISP AE resumed\n");
+		if (s->cfg.verbose)
+			printf("[cus3a] ISP AE resumed\n");
 	}
 
 	/* Re-enable CUS3A AWB/AF */
 	if (have_awb && s->fn_cus3a_enable) {
 		int p111[13] = {1, 1, 1};
 		s->fn_cus3a_enable(0, p111);
-		printf("[cus3a] CUS3A AWB/AF re-enabled\n");
+		if (s->cfg.verbose)
+			printf("[cus3a] CUS3A AWB/AF re-enabled\n");
 	}
 
 	if (have_sync && s->fn_close_sync)
@@ -598,8 +612,9 @@ next:
 
 	free(awb_hw);
 	free(ae_hw);
-	printf("[cus3a] thread stopped (%lu frames, %lu ae, %lu awb)\n",
-		frames, ae_changes, awb_changes);
+	if (s->cfg.verbose)
+		printf("[cus3a] thread stopped (%lu frames, %lu ae, "
+			"%lu awb)\n", frames, ae_changes, awb_changes);
 	return NULL;
 }
 
