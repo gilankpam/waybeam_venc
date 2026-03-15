@@ -85,7 +85,7 @@ against the SDK directly with hardcoded typedef aliases that pointed to the wron
 
 ### 1. VPE struct typedefs (root cause fix)
 
-`star6e-standalone/include/star6e.h`:
+`include/star6e.h`:
 ```c
 /* infinity6e (Star6E) driver expects the larger i6e_ struct variants which
    include additional lens-correction fields.  Using the smaller i6_ structs
@@ -102,7 +102,7 @@ typedef i6_vpe_para  MI_VPE_ChannelParam_t;
 
 ### 2. Binding flag cleanup (secondary, matches HAL)
 
-`star6e-standalone/src/backend_star6e.c` — VIF→VPE binding:
+`src/backend_star6e.c` — VIF→VPE binding:
 ```c
 // Before:
 MI_SYS_BindChnPort2(&vif_port, &vpe_port, ..., I6_SYS_LINK_REALTIME | I6_SYS_LINK_LOWLATENCY, 0);

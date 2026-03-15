@@ -41,8 +41,8 @@ The toolchain is auto-downloaded on first build. Each backend builds to
 its own output directory:
 
 ```
-star6e-standalone/out/star6e/venc    # Star6E binary
-star6e-standalone/out/maruko/venc    # Maruko binary
+out/star6e/venc    # Star6E binary
+out/maruko/venc    # Maruko binary
 ```
 
 Both backends can coexist — no clean needed between them.
@@ -51,13 +51,13 @@ Stage a deployable bundle with shared libraries:
 
 ```sh
 make stage SOC_BUILD=star6e
-# Output: star6e-standalone/out/star6e/venc + out/star6e/lib/*.so
+# Output: out/star6e/venc + out/star6e/lib/*.so
 ```
 
 Run host tests:
 
 ```sh
-make -C star6e-standalone test-ci
+make test-ci
 ```
 
 ## Deployment
@@ -65,7 +65,7 @@ make -C star6e-standalone test-ci
 Copy the binary to the target device:
 
 ```sh
-scp star6e-standalone/out/star6e/venc root@192.168.2.13:/usr/bin/venc
+scp out/star6e/venc root@192.168.2.13:/usr/bin/venc
 ```
 
 The binary resolves shared libraries from `/usr/lib`. For staged bundles,
@@ -74,7 +74,7 @@ set `LD_LIBRARY_PATH` to the lib directory.
 ## Configuration
 
 venc loads configuration from `/etc/venc.json` on startup. A default
-template is provided at `star6e-standalone/config/venc.default.json`.
+template is provided at `config/venc.default.json`.
 
 ```json
 {
@@ -587,7 +587,7 @@ another, correlating frames by (SSRC, RTP timestamp).
 Build (no cross-compiler needed):
 
 ```sh
-make -C star6e-standalone rtp_timing_probe
+make rtp_timing_probe
 ```
 
 Usage:
@@ -658,13 +658,13 @@ See `documentation/SENSOR_UNLOCK_IMX415_IMX335.md` for register details.
 Build, deploy, and test in one command:
 
 ```sh
-./star6e-standalone/scripts/remote_test.sh --help
+./scripts/remote_test.sh --help
 ```
 
 Run the API test suite against a live device:
 
 ```sh
-./star6e-standalone/scripts/api_test_suite.sh 192.168.2.13 8888
+./scripts/api_test_suite.sh 192.168.2.13 8888
 ```
 
 ## IMU & EIS (Proof of Concept)

@@ -47,13 +47,13 @@ bundled Maruko runtime set to the target automatically.
 Use helper script:
 
 ```bash
-./star6e-standalone/scripts/remote_test.sh --help
+./scripts/remote_test.sh --help
 ```
 
 SoC override is available when needed:
 
 ```bash
-./star6e-standalone/scripts/remote_test.sh --soc-build maruko --run-bin venc -- --list-sensor-modes --sensor-index 0
+./scripts/remote_test.sh --soc-build maruko --run-bin venc -- --list-sensor-modes --sensor-index 0
 ```
 
 ## SSH ControlMaster
@@ -95,7 +95,7 @@ Pass `--json-summary` to emit a machine-readable JSON line after all
 human-readable output:
 
 ```bash
-./star6e-standalone/scripts/remote_test.sh --json-summary --host root@192.168.2.10 -- -f 30
+./scripts/remote_test.sh --json-summary --host root@192.168.2.10 -- -f 30
 ```
 
 Output (last line):

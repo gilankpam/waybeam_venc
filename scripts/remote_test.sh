@@ -91,12 +91,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-STANDALONE_DIR="${ROOT_DIR}/star6e-standalone"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAR6E_CC="${ROOT_DIR}/toolchain/toolchain.sigmastar-infinity6e/bin/arm-openipc-linux-gnueabihf-gcc"
 SOC_BUILD_RESOLVED=""
 REMOTE_FAMILY=""
-MARUKO_RUNTIME_DIR="${MARUKO_RUNTIME_DIR:-${STANDALONE_DIR}/libs/maruko}"
+MARUKO_RUNTIME_DIR="${MARUKO_RUNTIME_DIR:-${ROOT_DIR}/libs/maruko}"
 MARUKO_UCLIBC_DIR="${MARUKO_UCLIBC_DIR:-${MARUKO_RUNTIME_DIR}/uclibc}"
 MARUKO_RUNTIME_LIBS=(
   libcam_os_wrapper.so
@@ -160,8 +159,8 @@ require_local_file() {
 }
 
 build_ioctl_trace_preload_if_needed() {
-  local src="${STANDALONE_DIR}/tools/ioctl_trace_preload.c"
-  local out="${STANDALONE_DIR}/tools/ioctl_trace_preload.so"
+  local src="${ROOT_DIR}/tools/ioctl_trace_preload.c"
+  local out="${ROOT_DIR}/tools/ioctl_trace_preload.so"
   if [[ -f "${out}" ]]; then
     return 0
   fi
@@ -289,11 +288,11 @@ if [[ "${SKIP_BUILD}" -eq 1 ]]; then
 else
   echo "[remote_test] Building standalone binaries (SOC_BUILD=${SOC_BUILD_RESOLVED})..."
   if [[ "${SOC_BUILD_RESOLVED}" == "maruko" ]]; then
-    make -C "${STANDALONE_DIR}" SOC_BUILD=maruko clean >/dev/null
-    make -C "${STANDALONE_DIR}" SOC_BUILD=maruko all
+    make -C "${ROOT_DIR}" SOC_BUILD=maruko clean >/dev/null
+    make -C "${ROOT_DIR}" SOC_BUILD=maruko all
   else
-    make -C "${STANDALONE_DIR}" SOC_BUILD=star6e clean >/dev/null
-    make -C "${STANDALONE_DIR}" SOC_BUILD=star6e all
+    make -C "${ROOT_DIR}" SOC_BUILD=star6e clean >/dev/null
+    make -C "${ROOT_DIR}" SOC_BUILD=star6e all
   fi
 fi
 
@@ -334,7 +333,7 @@ if [[ "${CHECK_DMESG}" -eq 1 ]]; then
 fi
 
 deploy_binaries() {
-  local bin="${STANDALONE_DIR}/out/${SOC_BUILD_RESOLVED}/${RUN_BIN}"
+  local bin="${ROOT_DIR}/out/${SOC_BUILD_RESOLVED}/${RUN_BIN}"
   local lib
   if [[ ! -f "${bin}" ]]; then
     echo "[remote_test] ERROR: binary not found: ${bin}"
@@ -345,7 +344,7 @@ deploy_binaries() {
   if [[ "${IOCTL_TRACE}" -eq 1 ]]; then
     build_ioctl_trace_preload_if_needed
     remote_ssh "mkdir -p '${REMOTE_DIR}/lib'"
-    copy_file_ssh "${STANDALONE_DIR}/tools/ioctl_trace_preload.so" \
+    copy_file_ssh "${ROOT_DIR}/tools/ioctl_trace_preload.so" \
       "${REMOTE_DIR}/lib/ioctl_trace_preload.so"
   fi
   remote_ssh "chmod +x '${REMOTE_DIR}/${RUN_BIN}'"
@@ -361,8 +360,8 @@ deploy_binaries() {
       require_local_file "${MARUKO_UCLIBC_DIR}/${lib}"
       copy_file_ssh "${MARUKO_UCLIBC_DIR}/${lib}" "${REMOTE_DIR}/lib/${lib}"
     done
-    require_local_file "${STANDALONE_DIR}/tools/libmaruko_uclibc_shim.so"
-    copy_file_ssh "${STANDALONE_DIR}/tools/libmaruko_uclibc_shim.so" \
+    require_local_file "${ROOT_DIR}/tools/libmaruko_uclibc_shim.so"
+    copy_file_ssh "${ROOT_DIR}/tools/libmaruko_uclibc_shim.so" \
       "${REMOTE_DIR}/lib/libmaruko_uclibc_shim.so"
   fi
 }

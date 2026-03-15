@@ -9,7 +9,7 @@ Workflow: `AGENTS.md`
 
 ## Scope & Constraints
 
-- This plan targets `star6e-standalone/` only.
+- This plan targets the repo root only.
 - All incoming PRs are already merged. The baseline for this plan is the
   current `master` branch after the merge set completed.
 - Refactoring work happens on a dedicated refactor branch cut from `master`.
@@ -39,7 +39,7 @@ Each gate follows the standard project pipeline:
 
 A gate is complete when:
 1. `make verify` passes.
-2. `make -C star6e-standalone test` passes.
+2. `make test` passes.
 3. Deployment tests pass for every populated row in
    `AGENTS.md -> Operational Defaults -> Deployment Targets`.
    At the time of this plan update, that means the populated Star6E rows are
@@ -64,14 +64,14 @@ gone.
 - Working tree clean on `master`.
 - Refactor branch created from current `master`.
 - `make verify` passes.
-- `make -C star6e-standalone test` passes.
+- `make test` passes.
 
 **Actions:**
 1. Create the dedicated refactor branch from `master`.
 2. Tag the baseline commit: `git tag pre-refactor-baseline`.
 3. Run:
    - `make verify`
-   - `make -C star6e-standalone test`
+   - `make test`
 4. Run deployment tests for every populated host row in `AGENTS.md`:
    - first `--list-sensor-modes`
    - then every reported sensor mode at its max FPS
@@ -84,7 +84,7 @@ gone.
 **Verification:**
 ```bash
 make verify
-make -C star6e-standalone test
+make test
 ```
 
 ---
@@ -108,7 +108,7 @@ lifecycle flow.
   - `src/snr_toggle_test.c`
   - `src/snr_sequence_probe.c`
   - any other remaining users
-- Update `star6e-standalone/Makefile` source and dependency lists.
+- Update `Makefile` source and dependency lists.
 - Remove all `__double_underscore__` identifiers and legacy parser macros.
 - Rename touched legacy `camelCase` project functions to `snake_case`.
 - Do **not** change pipeline orchestration in this gate.
@@ -127,7 +127,7 @@ helpers and the standalone `Makefile`.
 make lint
 make lint SOC_BUILD=maruko
 make verify
-make -C star6e-standalone test
+make test
 ```
 
 ---
@@ -190,7 +190,7 @@ grown beyond the prestudy snapshot, especially in RTP/SHM packetization.
 **Verification:**
 ```bash
 make verify
-make -C star6e-standalone test
+make test
 ```
 
 Deployment verification for this gate should prioritize Star6E transport
@@ -231,7 +231,7 @@ cleanup ordering.
 **Verification:**
 ```bash
 make verify
-make -C star6e-standalone test
+make test
 ```
 
 Deployment verification for this gate should use the full populated device
@@ -262,7 +262,7 @@ boundaries are stable.
 **Verification:**
 ```bash
 make verify
-make -C star6e-standalone test
+make test
 ```
 
 ---
@@ -293,7 +293,7 @@ rate, latency, or WFB-related behavior on Star6E.
 **Verification:**
 ```bash
 make verify
-make -C star6e-standalone test
+make test
 ```
 
 Deployment verification for this gate should include packet-rate checks and

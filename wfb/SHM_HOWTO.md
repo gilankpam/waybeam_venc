@@ -27,7 +27,7 @@ No UDP sockets on the video path. Audio continues over UDP to localhost.
 On the build host (x86_64 Linux):
 
 ```bash
-cd star6e-standalone/wfb
+cd wfb
 ./build_wfb_tx.sh
 ```
 
@@ -45,7 +45,7 @@ git, curl, autotools. First run downloads ~5 MB (libsodium) + ~2 MB (wfb-ng).
 
 ```bash
 # One-command deploy (builds if needed, then scp to device):
-cd star6e-standalone/wfb
+cd wfb
 ./build_wfb_tx.sh --deploy
 
 # Or with a custom host:

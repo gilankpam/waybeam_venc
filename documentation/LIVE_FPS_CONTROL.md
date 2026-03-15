@@ -125,7 +125,7 @@ To change sensor modes:
 
 ## Implementation Files
 
-- `star6e-standalone/src/backend_star6e.c` — `apply_fps()`, pipeline bind setup
-- `star6e-standalone/src/sensor_select.c` — `sensor_mode_cost()` FPS-aware scoring,
+- `src/backend_star6e.c` — `apply_fps()`, pipeline bind setup
+- `src/sensor_select.c` — `sensor_mode_cost()` FPS-aware scoring,
   always-maxFps sensor configuration
-- `star6e-standalone/include/sensor_select.h` — updated `sensor_mode_cost()` signature
+- `include/sensor_select.h` — updated `sensor_mode_cost()` signature

@@ -13,7 +13,7 @@
   2. Runtime SoC autodetect/override in `venc` has been removed.
   3. Star6E backend is stable with default `RTP + H.265 CBR`.
   4. Maruko backend streams in compact and RTP modes.
-  5. Maruko runtime/link libs are vendored under `star6e-standalone/libs/maruko/`.
+  5. Maruko runtime/link libs are vendored under `libs/maruko/`.
   6. Maruko shim is a normal runtime dependency (`libmaruko_uclibc_shim.so`), not a preload requirement.
   7. JSON runtime attempt was rolled back after Star6E stream regressions.
      - current runtime remains CLI-based `venc` path.

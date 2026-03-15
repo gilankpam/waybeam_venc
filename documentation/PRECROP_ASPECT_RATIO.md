@@ -165,7 +165,7 @@ in all modes.
 
 ## Source Files
 
-- `star6e-standalone/src/backend_star6e.c` — `compute_precrop()`, modified
+- `src/backend_star6e.c` — `compute_precrop()`, modified
   `start_vif()` and `start_vpe()`
 
 ## SDK References

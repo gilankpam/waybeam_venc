@@ -78,12 +78,12 @@ New tests:
 
 | File | Change |
 |------|--------|
-| `star6e-standalone/include/venc_ring.h` | V2 header, inline fixes, counters |
-| `star6e-standalone/src/venc_ring.c` | Overflow checks, attach hardening, destroy invalidation, monotonic epoch |
-| `star6e-standalone/wfb/shm-input.patch` | init_complete detection, epoch logging, V2 ABI |
-| `star6e-standalone/tests/test_venc_ring.c` | 7 new hardening tests |
-| `star6e-standalone/tools/shm_ring_stats.c` | Print new fields |
-| `star6e-standalone/tools/shm_consumer_test.c` | Print epoch/version |
+| `include/venc_ring.h` | V2 header, inline fixes, counters |
+| `src/venc_ring.c` | Overflow checks, attach hardening, destroy invalidation, monotonic epoch |
+| `wfb/shm-input.patch` | init_complete detection, epoch logging, V2 ABI |
+| `tests/test_venc_ring.c` | 7 new hardening tests |
+| `tools/shm_ring_stats.c` | Print new fields |
+| `tools/shm_consumer_test.c` | Print epoch/version |
 
 ## Build Verification
 

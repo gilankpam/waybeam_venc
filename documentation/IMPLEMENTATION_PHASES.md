@@ -56,7 +56,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
   - Process hardening:
     - Added explicit checkpoint cadence rules in this file to ensure periodic persistence of progress and next-step plans during long sessions.
   - Current technical state summary:
-    - standalone target remains `star6e-standalone/` only.
+    - standalone target remains `` only.
     - cold boot high-fps issue is still unresolved; best cold latch observed so far uses HDR plane mode but remains fps-limited (~24/31 observed).
     - `majestic` prewarm can still unlock mode latching paths not yet reproduced reliably in pure cold standalone init.
   - Immediate next-step plan after checkpoint C:
@@ -70,7 +70,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
   - Tooling updates:
     - Added `--trace-state` to `snr_toggle_test` for call-boundary snapshots
       (`GetCurRes`, `GetFps`, `GetPadInfo`) and mode-table dumps.
-    - Hardened reboot handling in `star6e-standalone/scripts/remote_test.sh`:
+    - Hardened reboot handling in `scripts/remote_test.sh`:
       now waits for SSH-down transition before waiting for reconnect.
   - Key experimental results:
     - Cold + `plane=linear`: mode table remains linear (4 modes), but `SetRes(mode 3)` still leaves active mode at index `0`.
@@ -90,13 +90,13 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
     - tested sequence equivalent to:
       `SetPlaneMode(linear) -> SetRes(1) -> SetFps(30) -> Enable`
     - command:
-      `./star6e-standalone/scripts/remote_test.sh --reboot-before-run --timeout-sec 30 --run-bin snr_toggle_test -- --sensor-index 0 --sensor-mode 1 -f 30 --max-cases 1 --init-snr-dev 0 --setres-timing pre --fps-timing pre --hold-vif none --plane-mode linear --no-reset --quiet`
+      `./scripts/remote_test.sh --reboot-before-run --timeout-sec 30 --run-bin snr_toggle_test -- --sensor-index 0 --sensor-mode 1 -f 30 --max-cases 1 --init-snr-dev 0 --setres-timing pre --fps-timing pre --hold-vif none --plane-mode linear --no-reset --quiet`
     - result:
       - `SetRes(1)` returned success but active mode still stayed `0` (`3840x2160@30`).
       - fps set to `30` succeeded, but mode latch did not.
   - Follow-up in same boot (to test "priming" effect):
     - command:
-      `./star6e-standalone/scripts/remote_test.sh --timeout-sec 30 --run-bin snr_toggle_test -- --sensor-index 0 --sensor-mode 3 -f 120 --max-cases 1 --init-snr-dev 0 --setres-timing pre --fps-timing pre --hold-vif none --plane-mode linear --no-reset --quiet`
+      `./scripts/remote_test.sh --timeout-sec 30 --run-bin snr_toggle_test -- --sensor-index 0 --sensor-mode 3 -f 120 --max-cases 1 --init-snr-dev 0 --setres-timing pre --fps-timing pre --hold-vif none --plane-mode linear --no-reset --quiet`
     - result:
       - still `mode_ok=0`, `fps_ok=0`; kernel reports `MI_SNR_IMPL_SetFps ... fail`.
   - dmesg deltas for these runs:
@@ -110,10 +110,10 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
 
 - 2026-02-21 checkpoint F:
   - Added minimal unlock-focused harness:
-    - `star6e-standalone/src/snr_sequence_probe.c`
-    - build target `snr_sequence_probe` in `star6e-standalone/Makefile`
+    - `src/snr_sequence_probe.c`
+    - build target `snr_sequence_probe` in `Makefile`
     - remote uploader updated to include probe binary:
-      `star6e-standalone/scripts/remote_test.sh`
+      `scripts/remote_test.sh`
   - Probe design:
     - stage-1 (developer snippet focused):
       `SetPlaneMode(linear) -> GetRes(idx) -> SetRes(mode) -> SetFps(fps) -> Enable`
@@ -158,7 +158,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
     - after current cold-state test matrix/probe runs, fetch and inspect `majestic` on host.
     - goal is to recover exact `start_sdk -> mi_snr_init` trigger order that unlocks high-FPS modes.
   - Added host helper script:
-    - `star6e-standalone/tools/majestic_reverse.sh`
+    - `tools/majestic_reverse.sh`
     - performs quick extraction (`file`, `readelf`, `strings`) and writes focused symbol/log hints under `/tmp/majestic_reverse`.
   - Immediate next-step plan after checkpoint G:
     1. Run cold-state probe batch first (no Majestic prewarm) and capture outcomes.
@@ -213,7 +213,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
       kernel BUG at `MI_SNR_IMPL_CustFunction`; therefore raw replay is not safe/usable as-is.
   - Tooling update for faster feedback:
     - added UDP log mirror wrapper:
-      `star6e-standalone/scripts/remote_test_udp.sh`
+      `scripts/remote_test_udp.sh`
     - forwards `remote_test.sh` output with timestamp + sequence to `udp://<host>:<port>`.
   - Immediate next-step plan after checkpoint I:
     1. Keep raw cust path disabled for unlock attempts (kernel-BUG risk); use API-level calls only.
@@ -253,7 +253,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
 
 - 2026-02-21 checkpoint K:
   - Tooling/implementation updates:
-    - `star6e-standalone/scripts/remote_test.sh` now supports `--ioctl-trace`
+    - `scripts/remote_test.sh` now supports `--ioctl-trace`
       (auto-copies `tools/ioctl_trace_preload.so` and exports `LD_PRELOAD` remotely).
     - `snr_sequence_probe` gained new prelude controls:
       - VPE: `--touch-vpe-pre/post`, `--hold-vpe-pre/post`
@@ -406,7 +406,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
       without running Majestic.
     - Majestic prewarm effect is likely achieved through the same/similar sensor custom latch path.
   - Immediate next-step plan:
-    1. port this pre-latch into `star6e-standalone/src/main.c` as an opt-in debug flag first
+    1. port this pre-latch into `src/main.c` as an opt-in debug flag first
        (`MI_SNR_CustFunction(cmd=0x23, {0x300a,0x80})` before `SetRes/SetFps`).
     2. verify end-to-end with `venc` cold boot at:
        - mode `2 @90`
@@ -426,7 +426,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
       - cold-state test commands and expected results,
       - troubleshooting notes.
   - Standalone `venc` implementation:
-    - integrated sensor pre-latch step in `star6e-standalone/src/main.c`:
+    - integrated sensor pre-latch step in `src/main.c`:
       - `MI_SNR_CustFunction(cmd=0x23, payload{0x300a,0x80}, dir=driver)`
       - executed before `MI_SNR_SetRes` and re-applied in FPS retry path.
     - added runtime tuning flags:
@@ -435,8 +435,8 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
       - `--sensor-unlock-reg`
       - `--sensor-unlock-value`
       - `--sensor-unlock-dir`
-    - updated CLI help in `star6e-standalone/src/shared.c`.
-    - added missing sensor custom ABI declarations in `star6e-standalone/include/star6e.h`.
+    - updated CLI help in `src/shared.c`.
+    - added missing sensor custom ABI declarations in `include/star6e.h`.
   - Validation:
     - cold boot, standalone `venc` run with mode `3` and `-f 120`:
       - unlock log printed,
@@ -453,34 +453,34 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
     - `venc/`, `vdec/`, `osd/`, `sample/`, `deploy/`
     - legacy SDK trees: `sdk/gk7205v300`, `sdk/hi3516ev300`, `sdk/hi3536dv100`
   - Promoted standalone runtime libs to owned location:
-    - `star6e-standalone/libs/star6e/*.so`
-    - `star6e-standalone/Makefile` now links against standalone-owned libs path.
+    - `libs/star6e/*.so`
+    - `Makefile` now links against standalone-owned libs path.
   - Updated top-level repo entrypoints to standalone-only:
     - `build.sh` now supports only `star6e|venc-star6e|clean`.
-    - `manual_build.sh` now delegates to `star6e-standalone/manual_build.sh`.
+    - `manual_build.sh` now delegates to `manual_build.sh`.
     - `README.md` rewritten for standalone workflow only.
     - `.github/workflows/main.yml` now builds only standalone binaries.
     - `.gitignore` now tracks standalone outputs/binaries instead of legacy targets.
   - Immediate next-step plan:
-    1. Continue sensor unlock/high-FPS work only in `star6e-standalone/src/` and its probes.
-    2. Keep remote validation through `star6e-standalone/scripts/remote_test.sh` with reboot-gated cold runs.
+    1. Continue sensor unlock/high-FPS work only in `src/` and its probes.
+    2. Keep remote validation through `scripts/remote_test.sh` with reboot-gated cold runs.
     3. Avoid reintroducing legacy multi-platform code paths in this repository.
 
 - 2026-02-22 checkpoint R (refactor review + cleanup pass):
   - Performed standalone-only refactor review and fixed residual quality issues:
-    - removed implicit-declaration build warnings by extending `star6e-standalone/include/star6e.h`
+    - removed implicit-declaration build warnings by extending `include/star6e.h`
       with missing SNR declarations (`InitDev`, `DeInitDev`, `GetCurRes`, `GetFps`,
       `GetPlaneMode`, `SetOrien`) and shared init param type.
     - de-duplicated local init-param probe structs in:
-      - `star6e-standalone/src/snr_toggle_test.c`
-      - `star6e-standalone/src/snr_sequence_probe.c`
-    - normalized standalone runtime examples in `star6e-standalone/README.md`
+      - `src/snr_toggle_test.c`
+      - `src/snr_sequence_probe.c`
+    - normalized standalone runtime examples in `README.md`
       to `/tmp/waybeam_venc_test` paths.
-    - hardened `--ioctl-trace` flow in `star6e-standalone/scripts/remote_test.sh`:
+    - hardened `--ioctl-trace` flow in `scripts/remote_test.sh`:
       - if preload `.so` is missing, script now auto-builds
         `tools/ioctl_trace_preload.so` with the Star6E cross compiler.
     - removed accidental binary artifact from tracking intent by ignoring:
-      - `star6e-standalone/tools/ioctl_trace_preload.so` in `.gitignore`.
+      - `tools/ioctl_trace_preload.so` in `.gitignore`.
   - Validation:
     - `./manual_build.sh` now completes with no implicit-declaration warnings.
     - `bash build.sh star6e` succeeds for all standalone binaries.
@@ -491,7 +491,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
 - 2026-02-22 checkpoint S (Makefile + docs consolidation):
   - Build entrypoint migration:
     - added root `Makefile` with targets `build`, `stage`, `clean`, `toolchain`, `remote-test`.
-    - removed redundant wrappers `build.sh`, `manual_build.sh`, and `star6e-standalone/manual_build.sh`.
+    - removed redundant wrappers `build.sh`, `manual_build.sh`, and `manual_build.sh`.
     - CI workflow switched to `make build`.
   - Documentation consolidation:
     - added canonical `documentation/` folder and moved/centralized sensor unlock + timeline docs.
@@ -500,17 +500,17 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
 - 2026-02-22 checkpoint T (dual-backend split kickoff):
   - Backend split scaffold started in `star6e-standalone`:
     - added backend abstraction header:
-      - `star6e-standalone/include/backend.h`
+      - `include/backend.h`
     - added runtime backend detection module:
-      - `star6e-standalone/src/backend_detect.c`
+      - `src/backend_detect.c`
     - added Maruko backend stub entrypoint:
-      - `star6e-standalone/src/backend_maruko.c`
+      - `src/backend_maruko.c`
     - integrated backend selection into main flow:
       - `--soc auto|star6e|maruko`
       - auto-detect via MI runtime symbol probing
       - Maruko currently exits with explicit "not implemented" message
     - updated build wiring:
-      - `star6e-standalone/Makefile` now compiles backend modules into `venc`
+      - `Makefile` now compiles backend modules into `venc`
   - Validation:
     - clean smoke build executed from repo root:
       - `make clean && make build`
@@ -530,16 +530,16 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
 - 2026-02-22 checkpoint U (backend dispatcher + Star6E extraction):
   - Completed no-behavior-change extraction of Star6E runtime path:
     - moved Star6E implementation entrypoint into:
-      - `star6e-standalone/src/backend_star6e.c`
+      - `src/backend_star6e.c`
       - exported as `star6e_backend_entrypoint(argc, argv)`
     - introduced thin top-level dispatcher:
-      - `star6e-standalone/src/main.c`
+      - `src/main.c`
       - parses `--soc`, runs backend detection once, dispatches to selected backend.
   - Compatibility handling:
     - `--soc` is still accepted by Star6E parser path for passthrough compatibility.
     - runtime selection output remains visible before backend startup.
   - Build wiring:
-    - `star6e-standalone/Makefile` now links:
+    - `Makefile` now links:
       - `src/main.c src/backend_star6e.c src/shared.c src/backend_detect.c src/backend_maruko.c`
   - Validation:
     - clean rebuild succeeded:
@@ -595,7 +595,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
 
 - 2026-02-22 checkpoint X (Maruko skeleton lifecycle + toolchain target):
   - Implemented Maruko backend lifecycle skeleton in:
-    - `star6e-standalone/src/backend_maruko.c`
+    - `src/backend_maruko.c`
   - New behavior when `--soc maruko` is selected:
     - runs staged flow with explicit logs:
       1. init (placeholder)
@@ -657,12 +657,12 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
 
 - 2026-02-22 checkpoint AA (Maruko VIF API alignment complete):
   - Refactored Maruko VIF ABI usage to match Maruko SDK expectations:
-    - added Maruko-specific VIF type/prototype wrappers in `star6e-standalone/include/star6e.h`:
+    - added Maruko-specific VIF type/prototype wrappers in `include/star6e.h`:
       - `MI_VIF_GroupAttr_t`
       - `MI_VIF_DevAttr_t` (input rect + pixel format layout)
       - `MI_VIF_OutputPortAttr_t`
       - `MI_VIF_CreateDevGroup` / `MI_VIF_DestroyDevGroup`
-    - updated Maruko VIF bring-up in `star6e-standalone/src/backend_maruko.c`:
+    - updated Maruko VIF bring-up in `src/backend_maruko.c`:
       - now uses `CreateDevGroup -> SetDevAttr -> EnableDev -> SetOutputPortAttr -> EnableOutputPort`
       - added explicit failure-path rollback (`DisableOutputPort`, `DisableDev`, `DestroyDevGroup`)
       - updated teardown to always destroy VIF group.
@@ -765,11 +765,11 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
 
 - 2026-02-22 checkpoint AF (Maruko libs vendored in-repo):
   - Added bundled Maruko runtime/link libs under:
-    - `star6e-standalone/libs/maruko/`
+    - `libs/maruko/`
   - Updated build/test defaults to use local Maruko libs:
-    - `star6e-standalone/Makefile` now defaults `MARUKO_MI_LIB_DIR`/`MARUKO_COMMON_LIB_DIR`
-      to `star6e-standalone/libs/maruko`.
-    - `star6e-standalone/scripts/remote_test.sh` now defaults to the same local lib folder.
+    - `Makefile` now defaults `MARUKO_MI_LIB_DIR`/`MARUKO_COMMON_LIB_DIR`
+      to `libs/maruko`.
+    - `scripts/remote_test.sh` now defaults to the same local lib folder.
   - Result:
     - deploying to target is now self-contained (compiled binary + bundled libs),
       without requiring external Maruko SDK lib paths on host.
@@ -780,7 +780,7 @@ Source: extracted from historical session checkpoints (archived from prior `AGEN
 - 2026-02-22 checkpoint AG (targeted-build cleanup + defaults alignment):
   - Architecture cleanup:
     - removed runtime SoC detect/override path from `venc`.
-    - deleted `star6e-standalone/src/backend_detect.c`.
+    - deleted `src/backend_detect.c`.
     - top-level `main.c` now dispatches directly to the backend compiled by `SOC_BUILD`.
   - Runtime defaults aligned:
     - stream mode default is now `RTP`.

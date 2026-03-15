@@ -56,9 +56,8 @@ USAGE
   esac
 done
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-STANDALONE_DIR="${ROOT_DIR}/star6e-standalone"
-REMOTE_TEST="${ROOT_DIR}/star6e-standalone/scripts/remote_test.sh"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REMOTE_TEST="${ROOT_DIR}/scripts/remote_test.sh"
 
 IFS=',' read -ra FPS_VALUES <<< "${FPS_LIST}"
 

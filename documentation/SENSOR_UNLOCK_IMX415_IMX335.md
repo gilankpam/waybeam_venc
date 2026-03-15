@@ -4,7 +4,7 @@ This document captures the proven initialization sequence required to unlock
 IMX415 high-FPS sensor modes on cold boot in the standalone Star6E path.
 
 Scope:
-- Target: `star6e-standalone/` only
+- Target: the repo root only
 - Device class: SigmaStar Star6E / SSC338Q
 - Sensor: IMX415 (observed on this board family)
 
@@ -94,7 +94,7 @@ Important:
 Success path (`120fps`):
 
 ```bash
-star6e-standalone/scripts/remote_test.sh \
+scripts/remote_test.sh \
   --reboot-before-run --timeout-sec 45 --run-bin snr_sequence_probe -- \
   --sensor-index 0 --stage1-mode 3 --stage1-fps 120 --skip-stage2 \
   --cust-pre --cust-cmd 0x23 --cust-size 4 --cust-value 0x0080300a --cust-dir 0
@@ -107,7 +107,7 @@ Expected:
 Negative control (`0x40`, should fail):
 
 ```bash
-star6e-standalone/scripts/remote_test.sh \
+scripts/remote_test.sh \
   --reboot-before-run --timeout-sec 45 --run-bin snr_sequence_probe -- \
   --sensor-index 0 --stage1-mode 1 --stage1-fps 30 --stage2-mode 3 --stage2-fps 120 \
   --cust-pre --cust-cmd 0x23 --cust-size 4 --cust-value 0x0040300a --cust-dir 0

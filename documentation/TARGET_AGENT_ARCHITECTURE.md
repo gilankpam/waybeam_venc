@@ -213,13 +213,12 @@ round-trip latency between runs.
 ## File Layout (Future)
 
 ```
-star6e-standalone/
-  tools/
-    test_agent.c          # Target-side agent source
-    test_agent_protocol.h # Protocol constants
-  scripts/
-    remote_test.sh        # Updated with --transport agent support
-    agent_client.sh       # Thin host-side client for the agent protocol
+tools/
+  test_agent.c          # Target-side agent source
+  test_agent_protocol.h # Protocol constants
+scripts/
+  remote_test.sh        # Updated with --transport agent support
+  agent_client.sh       # Thin host-side client for the agent protocol
 ```
 
 ## Implementation Priority

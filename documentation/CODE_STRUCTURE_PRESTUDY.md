@@ -1,7 +1,7 @@
 # Code Structure & Conventions Prestudy
 
 **Date:** 2026-03-11
-**Scope:** `star6e-standalone/` — the active implementation
+**Scope:** the repo root — the active implementation
 
 ---
 

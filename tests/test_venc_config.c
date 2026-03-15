@@ -379,21 +379,21 @@ static int test_sample_config_file(void)
 	venc_config_defaults(&cfg);
 
 	/* Load the shipped sample config relative to the test binary's
-	 * expected working directory (star6e-standalone/) */
-	int ret = venc_config_load("venc.json", &cfg);
+	 * expected working directory (repo root) */
+	int ret = venc_config_load("config/venc.default.json", &cfg);
 	CHECK("sample_load_ok", ret == 0);
 	if (ret != 0) return failures;
 
-	CHECK("sample_fps_90", cfg.video0.fps == 90);
+	CHECK("sample_fps_30", cfg.video0.fps == 30);
 	CHECK("sample_codec_h265", strcmp(cfg.video0.codec, "h265") == 0);
-	CHECK("sample_enabled", cfg.outgoing.enabled == true);
-	CHECK("sample_server", strcmp(cfg.outgoing.server, "udp://192.168.2.20:5600") == 0);
+	CHECK("sample_enabled", cfg.outgoing.enabled == false);
+	CHECK("sample_server", strcmp(cfg.outgoing.server, "") == 0);
 	CHECK("sample_stream_mode", strcmp(cfg.outgoing.stream_mode, "rtp") == 0);
 	CHECK("sample_bitrate", cfg.video0.bitrate == 8192);
 	CHECK("sample_web_port", cfg.system.web_port == 80);
 	CHECK("sample_slices", cfg.video0.slices_enabled == true);
 	CHECK("sample_audio_off", cfg.audio.enabled == false);
-	CHECK("sample_audio_port", cfg.outgoing.audio_port == 0);
+	CHECK("sample_audio_port", cfg.outgoing.audio_port == 5601);
 
 	return failures;
 }

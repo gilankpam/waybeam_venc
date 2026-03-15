@@ -41,11 +41,11 @@ If the port does not preserve that split, it will likely regress either:
 
 Minimum source scope:
 
-- [backend_star6e.c](/mnt/c/joakim_vencmar10/star6e-standalone/src/backend_star6e.c)
-- [venc_config.h](/mnt/c/joakim_vencmar10/star6e-standalone/include/venc_config.h)
-- [venc_config.c](/mnt/c/joakim_vencmar10/star6e-standalone/src/venc_config.c)
-- [venc_api.c](/mnt/c/joakim_vencmar10/star6e-standalone/src/venc_api.c)
-- [venc_api.h](/mnt/c/joakim_vencmar10/star6e-standalone/include/venc_api.h)
+- [backend_star6e.c](src/backend_star6e.c)
+- [venc_config.h](include/venc_config.h)
+- [venc_config.c](src/venc_config.c)
+- [venc_api.c](src/venc_api.c)
+- [venc_api.h](include/venc_api.h)
 - config JSON defaults only if the target repo still lacks `isp.aeMode`
 
 Most of the real behavior lives in `backend_star6e.c`.

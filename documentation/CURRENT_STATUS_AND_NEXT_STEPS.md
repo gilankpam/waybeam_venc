@@ -1,12 +1,12 @@
 # Current Status And Next Steps
 
 ## Current Status
-- Repository scope is standalone-only: `star6e-standalone/`.
+- Repository scope is the repo root.
 - Build entrypoint is root `Makefile` with explicit SoC split:
   - `make build SOC_BUILD=star6e`
   - `make build SOC_BUILD=maruko`
 - Required Maruko runtime/link libraries are now vendored in-repo under:
-  - `star6e-standalone/libs/maruko/`
+  - `libs/maruko/`
 - Dual-backend split is active via targeted builds only:
   - `SOC_BUILD=star6e`
   - `SOC_BUILD=maruko`

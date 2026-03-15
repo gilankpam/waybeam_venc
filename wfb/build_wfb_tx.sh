@@ -18,20 +18,19 @@
 #   shm_consumer_test  - ring throughput tester (dynamic, 10 KB)
 #
 # Requirements:
-#   - star6e toolchain at ../../toolchain/toolchain.sigmastar-infinity6e/
+#   - star6e toolchain at ../toolchain/toolchain.sigmastar-infinity6e/
 #   - git, curl, autotools (first run only)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-STAR6E_DIR="$(dirname "$SCRIPT_DIR")"
+VENC_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$SCRIPT_DIR/build"
 LIBSODIUM_VER="1.0.20"
 DEPLOY_HOST="${DEPLOY_HOST:-192.168.1.10}"
 DEPLOY_DIR="${DEPLOY_DIR:-/usr/bin}"
 
-# Toolchain (ROOT is one level above star6e-standalone)
-VENC_ROOT="$(dirname "$STAR6E_DIR")"
+# Toolchain (at repo root level)
 TOOLCHAIN_DIR="$VENC_ROOT/toolchain/toolchain.sigmastar-infinity6e"
 CROSS_PREFIX="arm-openipc-linux-gnueabihf"
 CROSS_CC="$TOOLCHAIN_DIR/bin/${CROSS_PREFIX}-gcc"
@@ -113,8 +112,8 @@ fi
 # ── Step 3: Copy venc_ring files + create pcap stub ──────────────────
 
 echo "=== Copying venc_ring files ==="
-cp "$STAR6E_DIR/include/venc_ring.h" "$WFB_DIR/src/venc_ring.h"
-cp "$STAR6E_DIR/src/venc_ring.c" "$WFB_DIR/src/venc_ring.c"
+cp "$VENC_ROOT/include/venc_ring.h" "$WFB_DIR/src/venc_ring.h"
+cp "$VENC_ROOT/src/venc_ring.c" "$WFB_DIR/src/venc_ring.c"
 
 # Stub pcap.h — wifibroadcast.hpp includes it but TX doesn't use pcap
 mkdir -p "$WFB_DIR/src/stub"
@@ -145,7 +144,7 @@ fi
 
 echo "=== Building wfb_tx ==="
 
-WFB_CFLAGS="-Wall -O2 -fno-strict-aliasing -I$SODIUM_PREFIX/include -I$STAR6E_DIR/include -I$WFB_DIR/src/stub"
+WFB_CFLAGS="-Wall -O2 -fno-strict-aliasing -I$SODIUM_PREFIX/include -I$VENC_ROOT/include -I$WFB_DIR/src/stub"
 WFB_CFLAGS="$WFB_CFLAGS -DZFEX_UNROLL_ADDMUL_SIMD=8 -DZFEX_INLINE_ADDMUL -DZFEX_INLINE_ADDMUL_SIMD"
 WFB_CFLAGS="$WFB_CFLAGS -DWFB_VERSION='\"shm-patched\"'"
 WFB_LDFLAGS="-L$SODIUM_PREFIX/lib -lrt -lsodium -static"
@@ -181,20 +180,20 @@ cp wfb_keygen "$BUILD_DIR/wfb_keygen"
 
 echo "=== Building SHM tools ==="
 
-TOOL_CFLAGS="-Os -Wall -I$STAR6E_DIR/include"
+TOOL_CFLAGS="-Os -Wall -I$VENC_ROOT/include"
 TOOL_LDFLAGS="-lrt -lpthread"
 
 echo "  Building shm_ring_stats..."
 $CROSS_CC $TOOL_CFLAGS -o "$BUILD_DIR/shm_ring_stats" \
-    "$STAR6E_DIR/tools/shm_ring_stats.c" \
-    "$STAR6E_DIR/src/venc_ring.c" \
+    "$VENC_ROOT/tools/shm_ring_stats.c" \
+    "$VENC_ROOT/src/venc_ring.c" \
     $TOOL_LDFLAGS
 $CROSS_STRIP "$BUILD_DIR/shm_ring_stats"
 
 echo "  Building shm_consumer_test..."
 $CROSS_CC $TOOL_CFLAGS -o "$BUILD_DIR/shm_consumer_test" \
-    "$STAR6E_DIR/tools/shm_consumer_test.c" \
-    "$STAR6E_DIR/src/venc_ring.c" \
+    "$VENC_ROOT/tools/shm_consumer_test.c" \
+    "$VENC_ROOT/src/venc_ring.c" \
     $TOOL_LDFLAGS
 $CROSS_STRIP "$BUILD_DIR/shm_consumer_test"
 

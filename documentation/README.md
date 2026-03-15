@@ -43,8 +43,8 @@ This folder is the canonical place for waybeam_venc project documentation.
 - [Pudding SDK Documentation](https://wx.comake.online/doc/doc/SigmaStarDocs-Pudding-0120/) — covers SENSOR, VIF, VPE, VENC, SYS, and ISP modules used by this project.
 
 ## Scope
-- Active implementation: `star6e-standalone/`
+- Active implementation: `src/`
 - All new implementation notes should be added under `documentation/`.
 - Default JSON config template is maintained in:
-  - `star6e-standalone/config/venc.default.json`
+  - `config/venc.default.json`
 - `AGENTS.md` is intentionally minimal and points here for canonical project docs.

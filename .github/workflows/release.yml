@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Unit tests
-        run: make -C star6e-standalone test
+        run: make test
 
   # ── Cross-compile builds ───────────────────────────────────────────
 
@@ -29,12 +29,12 @@ jobs:
       - name: Stage Star6E
         run: make stage SOC_BUILD=star6e
       - name: Verify output
-        run: test -x star6e-standalone/out/star6e/venc
+        run: test -x out/star6e/venc
       - name: Upload Star6E staged output
         uses: actions/upload-artifact@v4
         with:
           name: venc-star6e
-          path: star6e-standalone/out/star6e/
+          path: out/star6e/
 
   build-maruko:
     runs-on: ubuntu-latest
@@ -48,12 +48,12 @@ jobs:
       - name: Stage Maruko
         run: make stage SOC_BUILD=maruko
       - name: Verify output
-        run: test -x star6e-standalone/out/maruko/venc
+        run: test -x out/maruko/venc
       - name: Upload Maruko staged output
         uses: actions/upload-artifact@v4
         with:
           name: venc-maruko
-          path: star6e-standalone/out/maruko/
+          path: out/maruko/
 
   # ── Create/update release ──────────────────────────────────────────
 
@@ -83,7 +83,7 @@ jobs:
             mkdir -p "release/venc-${backend}"
             mv "release/${backend}/venc" "release/venc-${backend}/venc"
             mv "release/${backend}/lib" "release/venc-${backend}/lib"
-            cp star6e-standalone/config/venc.default.json "release/venc-${backend}/venc.json"
+            cp config/venc.default.json "release/venc-${backend}/venc.json"
             chmod +x "release/venc-${backend}/venc"
             tar -czf "release/venc-${backend}.tar.gz" -C release "venc-${backend}"
           done

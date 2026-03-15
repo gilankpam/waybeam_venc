@@ -7,7 +7,7 @@ OpenAI Codex, or any tool that reads AGENTS.md / CLAUDE.md).
 
 Standalone SigmaStar video encoder with dual-backend architecture.
 
-- Active implementation: `star6e-standalone/`
+- Active implementation: `src/`
 - Canonical documentation: `documentation/`
 - Version tracking: `VERSION` (SemVer) + `HISTORY.md` (changelog)
 
@@ -383,7 +383,7 @@ reference). Key rules summarized here:
 
 ### Output Layout
 
-Each backend builds to its own directory under `star6e-standalone/out/`:
+Each backend builds to its own directory under `out/`:
 
 ```
 out/star6e/venc                  ← Star6E binary
@@ -400,7 +400,7 @@ between them.  `make build` (default) always produces `out/star6e/venc`.
 - Do NOT modify `sdk/` headers. They are vendor-provided and read-only.
 - Do NOT add runtime SoC autodetection. Backend is selected at build time.
 - Do NOT use floating-point math in precrop or alignment calculations.
-- Do NOT commit toolchain/ or build output (star6e-standalone/out/).
+- Do NOT commit toolchain/ or build output (out/).
 - Do NOT add dependencies beyond the SigmaStar SDK and standard C library.
 - Do NOT use `--no-verify` or skip git hooks.
 - Do NOT open a PR without running `make verify` first.

@@ -19,7 +19,7 @@
 - Default config path:
   - `/etc/venc.json`
 - In-repo default template:
-  - `star6e-standalone/config/venc.default.json`
+  - `config/venc.default.json`
 - Schema versioning:
   - include `schema_version` in config,
   - reject unknown schema versions,

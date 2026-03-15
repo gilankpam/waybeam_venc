@@ -133,7 +133,7 @@ auto-applies one entry per frame.
 Bring BMI270 driver code into venc as a background thread. Validate IMU data
 quality and timing on the Star6E target.
 
-1. Port BMI270 I2C driver from wfb_openipc into `star6e-standalone/src/`
+1. Port BMI270 I2C driver from wfb_openipc into `src/`
 2. Add IMU reader thread that samples at 200 Hz with `CLOCK_MONOTONIC` timestamps
 3. Ring buffer for IMU samples (gyro + accel + timestamp)
 4. CLI flag `--eis` to enable IMU thread (disabled by default)

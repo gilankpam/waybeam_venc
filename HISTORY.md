@@ -188,7 +188,7 @@
 - Added repository PR checklist template with explicit contract/version/doc gates:
   - `.github/pull_request_template.md`
 - Added default JSON config template and planning artifacts for config/API migration:
-  - `star6e-standalone/config/venc.default.json`
+  - `config/venc.default.json`
   - `documentation/CONFIG_HTTP_API_ROADMAP.md`
 - Updated documentation/plan/process files to enforce:
   - Star6E-first rollout for SigmaStar API-touching features,
@@ -196,7 +196,7 @@
   - SemVer + changelog workflow.
 
 ## [0.1.0] - 2026-02-22
-- Baseline established for standalone-only repository scope (`star6e-standalone/`).
+- Baseline established for standalone-only repository scope.
 - Targeted dual-backend builds in place (`SOC_BUILD=star6e`, `SOC_BUILD=maruko`).
 - Runtime SoC autodetect removed from `venc`; backend is selected at build time.
 - Default stream behavior aligned to RTP + H.265 CBR.
