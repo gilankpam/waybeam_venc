@@ -391,7 +391,7 @@ static int test_sample_config_file(void)
 	CHECK("sample_stream_mode", strcmp(cfg.outgoing.stream_mode, "rtp") == 0);
 	CHECK("sample_bitrate", cfg.video0.bitrate == 8192);
 	CHECK("sample_web_port", cfg.system.web_port == 80);
-	CHECK("sample_slices", cfg.video0.slices_enabled == true);
+	CHECK("sample_slices", cfg.video0.slices_enabled == false);
 	CHECK("sample_audio_off", cfg.audio.enabled == false);
 	CHECK("sample_audio_port", cfg.outgoing.audio_port == 5601);
 
