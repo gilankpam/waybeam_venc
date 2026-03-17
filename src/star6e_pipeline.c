@@ -103,6 +103,52 @@ static int star6e_pipeline_disable_userspace3a(const IspRuntimeLib *lib,
 	return fn ? fn(0) : 0;
 }
 
+/* Poll MI_ISP_IQ_GetParaInitStatus until bFlag==1 or timeout (2000 ms).
+ * Called standalone after VIF→VPE bind when a new VPE channel was just
+ * created (first start or AR-change reinit): the ISP channel initialises
+ * asynchronously after MI_VPE_CreateChannel returns, so anything that
+ * touches the ISP (bin load, exposure cap) must wait here first.
+ * Without this poll the ISP would emit "IspApiGet channel not created"
+ * kernel errors on the first probe attempt. */
+static void star6e_pipeline_wait_isp_channel(void)
+{
+	typedef struct { int bFlag; } IspParaInitInfoParam;
+	typedef struct { IspParaInitInfoParam stParaAPI; } IspParaInitInfoType;
+	typedef int (*fn_get_para_init_t)(int, IspParaInitInfoType *);
+	fn_get_para_init_t fn;
+	void *handle;
+	int elapsed_ms = 0;
+
+	handle = dlopen("libmi_isp.so", RTLD_LAZY | RTLD_GLOBAL);
+	if (!handle) {
+		usleep(100 * 1000);
+		return;
+	}
+
+	fn = (fn_get_para_init_t)dlsym(handle, "MI_ISP_IQ_GetParaInitStatus");
+	if (!fn) {
+		usleep(100 * 1000);
+		dlclose(handle);
+		return;
+	}
+
+	while (elapsed_ms < 2000) {
+		IspParaInitInfoType info;
+
+		memset(&info, 0, sizeof(info));
+		if (fn(0, &info) == 0 && info.stParaAPI.bFlag == 1) {
+			printf("> ISP channel ready after %d ms\n", elapsed_ms);
+			dlclose(handle);
+			return;
+		}
+		usleep(1000);
+		elapsed_ms++;
+	}
+
+	fprintf(stderr, "WARNING: ISP channel readiness timeout after 2000 ms\n");
+	dlclose(handle);
+}
+
 static int star6e_pipeline_wait_isp_ready(const IspRuntimeLib *lib, void *ctx)
 {
 	typedef struct { int bFlag; } IspParaInitInfoParam;
@@ -882,6 +928,13 @@ static int bind_and_finalize_pipeline(Star6ePipelineState *state,
 			return ret;
 		}
 		state->bound_vif_vpe = 1;
+
+		/* A new VPE channel was just created (first start or AR-change
+		 * reinit). The ISP channel initialises asynchronously after
+		 * MI_VPE_CreateChannel.  Poll here before the bin load and
+		 * cap_exposure_for_fps touch the ISP, so the kernel ISP driver
+		 * does not emit "IspApiGet channel not created" errors. */
+		star6e_pipeline_wait_isp_channel();
 	}
 
 	bind_src_fps = state->sensor.mode.maxFps ?
