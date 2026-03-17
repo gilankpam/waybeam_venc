@@ -849,51 +849,6 @@ static void star6e_pipeline_imu_push(void *ctx, const ImuSample *sample)
  * causes a mutex deadlock.  ISP bin and exposure cap are safe to reapply. */
 static int g_isp_initialized = 0;
 
-/* Poll ISP channel readiness after VIF→VPE bind.  The ISP driver creates its
- * channel asynchronously after the bind; issuing further binds or frame
- * processing before it is ready produces continuous dmesg errors:
- *   [MS_CAM_IspApiGet] ISP channel [0] have NOT been created
- * This standalone helper dlopen/dlcloses libmi_isp.so so it can be called
- * without the full ISP bin loading context. */
-static void wait_isp_channel_ready(void)
-{
-	typedef struct { int bFlag; } IspParaInitInfoParam;
-	typedef struct { IspParaInitInfoParam stParaAPI; } IspParaInitInfoType;
-	typedef int (*fn_get_para_init_t)(int, IspParaInitInfoType *);
-	void *handle;
-	fn_get_para_init_t fn;
-	int elapsed_ms = 0;
-
-	handle = dlopen("libmi_isp.so", RTLD_LAZY | RTLD_GLOBAL);
-	if (!handle) {
-		usleep(100 * 1000);
-		return;
-	}
-
-	fn = (fn_get_para_init_t)dlsym(handle, "MI_ISP_IQ_GetParaInitStatus");
-	if (!fn) {
-		usleep(100 * 1000);
-		dlclose(handle);
-		return;
-	}
-
-	while (elapsed_ms < 2000) {
-		IspParaInitInfoType info;
-
-		memset(&info, 0, sizeof(info));
-		if (fn(0, &info) == 0) {
-			printf("> ISP channel ready after %d ms\n", elapsed_ms);
-			dlclose(handle);
-			return;
-		}
-		usleep(1000);
-		elapsed_ms++;
-	}
-
-	fprintf(stderr, "WARNING: ISP channel readiness timeout after 2000 ms\n");
-	dlclose(handle);
-}
-
 /* Phase 3: assign port structs, issue all MI_SYS bind calls, init output,
  * video, ISP bin, exposure cap, cus3a, clocks, and audio. */
 static int bind_and_finalize_pipeline(Star6ePipelineState *state,
@@ -927,7 +882,6 @@ static int bind_and_finalize_pipeline(Star6ePipelineState *state,
 			return ret;
 		}
 		state->bound_vif_vpe = 1;
-		wait_isp_channel_ready();
 	}
 
 	bind_src_fps = state->sensor.mode.maxFps ?
@@ -1272,6 +1226,13 @@ int star6e_pipeline_reinit(Star6ePipelineState *state, const VencConfig *vcfg,
 	return 0;
 }
 
+/* flatten: force GCC to inline all static callees into this function.
+ * The SigmaStar I6E ISP driver depends on the monolithic stack layout
+ * that results from inlining bind_and_finalize_pipeline() and
+ * prepare_pipeline_config().  When these are emitted as separate functions
+ * (as happens with -Os when they have multiple call-sites), the VPE→ISP
+ * channel init fails (MI_ISP_IQ_GetParaInitStatus returns error 6). */
+__attribute__((flatten))
 int star6e_pipeline_start(Star6ePipelineState *state, const VencConfig *vcfg,
 	SdkQuietState *sdk_quiet)
 {
