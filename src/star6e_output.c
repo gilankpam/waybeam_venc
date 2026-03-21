@@ -68,12 +68,7 @@ static int star6e_output_send_udp_parts(int socket_handle,
 	msg.msg_iov = vec;
 	msg.msg_iovlen = iovcnt;
 	sent = sendmsg(socket_handle, &msg, 0);
-	if (sent < 0) {
-		fprintf(stderr, "ERROR: sendmsg failed (%d)\n", errno);
-		return -1;
-	}
-
-	return 0;
+	return sent < 0 ? -1 : 0;
 }
 
 static int star6e_audio_output_resolve_destination(
@@ -241,6 +236,16 @@ int star6e_output_is_shm(const Star6eOutput *output)
 	return output && output->transport == STAR6E_OUTPUT_TRANSPORT_SHM;
 }
 
+uint32_t star6e_output_drain_send_errors(Star6eOutput *output)
+{
+	uint32_t n;
+	if (!output)
+		return 0;
+	n = output->send_errors;
+	output->send_errors = 0;
+	return n;
+}
+
 int star6e_output_send_rtp_parts(const Star6eOutput *output,
 	const uint8_t *header, size_t header_len,
 	const uint8_t *payload1, size_t payload1_len,
@@ -267,9 +272,13 @@ int star6e_output_send_rtp_parts(const Star6eOutput *output,
 			payload1, (uint16_t)payload1_len);
 	}
 
-	return star6e_output_send_udp_parts(output->socket_handle, &output->dst,
-		header, header_len, payload1, payload1_len,
-		payload2, payload2_len);
+	if (star6e_output_send_udp_parts(output->socket_handle, &output->dst,
+	    header, header_len, payload1, payload1_len,
+	    payload2, payload2_len) != 0) {
+		((Star6eOutput *)output)->send_errors++;
+		return -1;
+	}
+	return 0;
 }
 
 int star6e_output_send_compact_packet(const Star6eOutput *output,

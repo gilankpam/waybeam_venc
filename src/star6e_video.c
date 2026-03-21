@@ -160,6 +160,13 @@ size_t star6e_video_send_frame(Star6eVideoState *state,
 					state->verbose_packetizer_interval.ap_nals,
 					state->verbose_packetizer_interval.fu_packets);
 			}
+			{
+				uint32_t errs = star6e_output_drain_send_errors(
+					(Star6eOutput *)output);
+				if (errs > 0)
+					dprintf(ofd, "[net] %u send errors\n",
+						errs);
+			}
 			memset(&state->verbose_packetizer_interval, 0,
 				sizeof(state->verbose_packetizer_interval));
 		}
