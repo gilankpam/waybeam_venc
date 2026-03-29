@@ -762,7 +762,17 @@ static int prepare_pipeline_config(Star6ePipelineState *state,
 		return -1;
 	}
 
-	pconf->exposure_cap_us = vcfg->isp.exposure * 1000;
+	/* When legacyAe is active and no explicit exposure cap is set, the
+	 * ISP bin's built-in AE ignores SetExposureLimit for the physical
+	 * sensor register.  Auto-derive a cap from the sensor fps so the
+	 * shutter never exceeds the frame period.  Without this, the AE
+	 * converges on a long exposure that locks fps below the target. */
+	if (vcfg->isp.exposure > 0)
+		pconf->exposure_cap_us = vcfg->isp.exposure * 1000;
+	else if (vcfg->isp.legacy_ae && pconf->sensor_framerate > 0)
+		pconf->exposure_cap_us = 1000000 / pconf->sensor_framerate;
+	else
+		pconf->exposure_cap_us = 0;
 	pconf->image_mirror    = vcfg->image.mirror ? 1 : 0;
 	pconf->image_flip      = vcfg->image.flip   ? 1 : 0;
 	pconf->vpe_level_3dnr  = vcfg->fpv.noise_level;
@@ -934,6 +944,14 @@ static int bind_and_finalize_pipeline(Star6ePipelineState *state,
 		star6e_pipeline_wait_isp_channel();
 	}
 
+	/* Cap exposure BEFORE binding VPE→VENC.  The AE starts running as
+	 * soon as VIF→VPE is bound (above).  Without an early cap the AE
+	 * can converge on a shutter time longer than the frame period during
+	 * the ISP bin load + CUS3A init window, locking the pipeline at a
+	 * lower framerate until reinit. */
+	star6e_pipeline_cap_exposure_for_fps(pconf->sensor_framerate,
+		pconf->exposure_cap_us);
+
 	bind_src_fps = state->sensor.mode.maxFps ?
 		state->sensor.mode.maxFps : pconf->sensor_framerate;
 	bind_dst_fps = vcfg->video0.fps;
@@ -973,7 +991,8 @@ static int bind_and_finalize_pipeline(Star6ePipelineState *state,
 		star6e_pipeline_enable_cus3a(sdk_quiet);
 		g_isp_initialized = 1;
 	}
-	/* Always reapply exposure cap — FPS may have changed */
+	/* Reapply exposure cap after ISP bin load — the bin may reset AE
+	 * limits to its own defaults which could exceed the frame period. */
 	star6e_pipeline_cap_exposure_for_fps(pconf->sensor_framerate,
 		pconf->exposure_cap_us);
 	star6e_pipeline_set_hw_clocks(pconf->oc_level, vcfg->system.verbose);
