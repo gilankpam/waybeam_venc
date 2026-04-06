@@ -74,6 +74,8 @@ static int test_defaults(void)
 	CHECK("defaults_audio_codec", strcmp(cfg.audio.codec, "opus") == 0);
 	CHECK("defaults_audio_vol", cfg.audio.volume == 80);
 	CHECK("defaults_audio_port", cfg.outgoing.audio_port == 5601);
+	CHECK("defaults_scene_threshold_off", cfg.video0.scene_threshold == 0);
+	CHECK("defaults_scene_holdoff", cfg.video0.scene_holdoff == 2);
 
 	return failures;
 }
@@ -133,6 +135,7 @@ static int test_load_full_json(void)
 	CHECK("load_roi_qp", cfg.fpv.roi_qp == -18);
 	CHECK("load_roi_steps", cfg.fpv.roi_steps == 2);
 	CHECK("load_noise", cfg.fpv.noise_level == 5);
+	/* scene_threshold/scene_holdoff live in video0 section */
 
 	return failures;
 }
@@ -197,6 +200,7 @@ static int test_uri_parsing(void)
 	int failures = 0;
 	char host[64];
 	uint16_t port;
+	VencOutputUri parsed;
 
 	/* UDP URI */
 	int ret = venc_config_parse_server_uri("udp://10.0.0.1:6000",
@@ -204,6 +208,23 @@ static int test_uri_parsing(void)
 	CHECK("udp_ok", ret == 0);
 	CHECK("udp_host", strcmp(host, "10.0.0.1") == 0);
 	CHECK("udp_port", port == 6000);
+
+	ret = venc_config_parse_output_uri("udp://10.0.0.1:6000", &parsed);
+	CHECK("udp_output_uri_ok", ret == 0);
+	CHECK("udp_output_uri_type", parsed.type == VENC_OUTPUT_URI_UDP);
+	CHECK("udp_output_uri_host", strcmp(parsed.host, "10.0.0.1") == 0);
+	CHECK("udp_output_uri_port", parsed.port == 6000);
+
+	ret = venc_config_parse_output_uri("unix://waybeam_venc", &parsed);
+	CHECK("unix_output_uri_ok", ret == 0);
+	CHECK("unix_output_uri_type", parsed.type == VENC_OUTPUT_URI_UNIX);
+	CHECK("unix_output_uri_name",
+		strcmp(parsed.endpoint, "waybeam_venc") == 0);
+
+	ret = venc_config_parse_output_uri("shm://venc_ring", &parsed);
+	CHECK("shm_output_uri_ok", ret == 0);
+	CHECK("shm_output_uri_type", parsed.type == VENC_OUTPUT_URI_SHM);
+	CHECK("shm_output_uri_name", strcmp(parsed.endpoint, "venc_ring") == 0);
 
 	/* Bad scheme */
 	ret = venc_config_parse_server_uri("http://bad:80",
@@ -219,6 +240,10 @@ static int test_uri_parsing(void)
 	ret = venc_config_parse_server_uri("udp://host",
 		host, sizeof(host), &port);
 	CHECK("missing_port_fails", ret == -1);
+
+	ret = venc_config_parse_server_uri("unix://waybeam_venc",
+		host, sizeof(host), &port);
+	CHECK("unix_server_uri_rejected", ret == -1);
 
 	/* NULL args */
 	ret = venc_config_parse_server_uri(NULL, host, sizeof(host), &port);
@@ -236,6 +261,7 @@ static int test_roundtrip(void)
 	cfg.video0.bitrate = 12000;
 	cfg.video0.qp_delta = 6;
 	cfg.system.verbose = true;
+	cfg.video0.scene_threshold = 150;
 
 	char *json = venc_config_to_json_string(&cfg);
 	CHECK("serialize_ok", json != NULL);
@@ -258,6 +284,7 @@ static int test_roundtrip(void)
 	CHECK("roundtrip_bitrate", cfg2.video0.bitrate == 12000);
 	CHECK("roundtrip_qp_delta", cfg2.video0.qp_delta == 6);
 	CHECK("roundtrip_verbose", cfg2.system.verbose == true);
+	CHECK("roundtrip_scene_threshold", cfg2.video0.scene_threshold == 150);
 	/* Unchanged fields preserved */
 	CHECK("roundtrip_codec", strcmp(cfg2.video0.codec, "h265") == 0);
 	CHECK("roundtrip_gop", cfg2.video0.gop_size == 1.0);

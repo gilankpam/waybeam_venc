@@ -168,6 +168,10 @@ void venc_config_defaults(VencConfig *cfg)
 	cfg->record.gop_size = 0;
 	cfg->record.server[0] = '\0';
 
+	/* scene detection (video0) */
+	cfg->video0.scene_threshold = 0;   /* 0 = off */
+	cfg->video0.scene_holdoff = 2;
+
 	/* debug */
 	cfg->debug.show_osd = false;
 }
@@ -307,6 +311,11 @@ static void load_video0(const cJSON *root, VencConfigVideo *v)
 	if (v->qp_delta < -12) v->qp_delta = -12;
 	if (v->qp_delta > 12) v->qp_delta = 12;
 	v->frame_lost = json_get_bool(obj, "frameLost", v->frame_lost);
+	v->scene_threshold = (uint16_t)json_get_int(obj, "sceneThreshold",
+		(int)v->scene_threshold);
+	v->scene_holdoff = (uint8_t)json_get_int(obj, "sceneHoldoff",
+		(int)v->scene_holdoff);
+	if (v->scene_holdoff < 1 && v->scene_threshold > 0) v->scene_holdoff = 1;
 }
 
 static void load_outgoing(const cJSON *root, VencConfigOutgoing *s)
@@ -494,40 +503,86 @@ int venc_config_load(const char *path, VencConfig *cfg)
 int venc_config_parse_server_uri(const char *uri, char *host, size_t host_len,
 	uint16_t *port)
 {
+	VencOutputUri parsed;
+
 	if (!uri || !host || !port)
 		return -1;
-
-	const char *p = uri;
-
-	if (strncmp(p, "udp://", 6) == 0) {
-		p += 6;
-	} else {
-		fprintf(stderr, "[venc_config] ERROR: unsupported URI scheme in '%s' "
-			"(expected udp://)\n", uri);
+	if (venc_config_parse_output_uri(uri, &parsed) != 0)
+		return -1;
+	if (parsed.type != VENC_OUTPUT_URI_UDP) {
+		fprintf(stderr, "[venc_config] ERROR: URI '%s' is not udp://\n", uri);
 		return -1;
 	}
 
-	/* Find colon separating host:port */
-	const char *colon = strrchr(p, ':');
-	if (!colon || colon == p) {
-		fprintf(stderr, "[venc_config] ERROR: missing host:port in '%s'\n", uri);
-		return -1;
-	}
-
-	size_t hlen = (size_t)(colon - p);
-	if (hlen >= host_len)
-		hlen = host_len - 1;
-	memcpy(host, p, hlen);
-	host[hlen] = '\0';
-
-	long pval = strtol(colon + 1, NULL, 10);
-	if (pval <= 0 || pval > 65535) {
-		fprintf(stderr, "[venc_config] ERROR: invalid port in '%s'\n", uri);
-		return -1;
-	}
-	*port = (uint16_t)pval;
-
+	safe_strcpy(host, host_len, parsed.host);
+	*port = parsed.port;
 	return 0;
+}
+
+int venc_config_parse_output_uri(const char *uri, VencOutputUri *out)
+{
+	const char *p;
+
+	if (!uri || !out)
+		return -1;
+
+	memset(out, 0, sizeof(*out));
+	p = uri;
+	if (strncmp(p, "udp://", 6) == 0) {
+		const char *colon;
+		char *end = NULL;
+		long pval;
+		size_t hlen;
+
+		out->type = VENC_OUTPUT_URI_UDP;
+		p += 6;
+		colon = strrchr(p, ':');
+		if (!colon || colon == p) {
+			fprintf(stderr, "[venc_config] ERROR: missing host:port in '%s'\n",
+				uri);
+			return -1;
+		}
+
+		hlen = (size_t)(colon - p);
+		if (hlen >= sizeof(out->host))
+			hlen = sizeof(out->host) - 1;
+		memcpy(out->host, p, hlen);
+		out->host[hlen] = '\0';
+
+		pval = strtol(colon + 1, &end, 10);
+		if (!end || *end != '\0' || pval <= 0 || pval > 65535) {
+			fprintf(stderr, "[venc_config] ERROR: invalid port in '%s'\n", uri);
+			return -1;
+		}
+		out->port = (uint16_t)pval;
+		return 0;
+	}
+
+	if (strncmp(p, "unix://", 7) == 0) {
+		out->type = VENC_OUTPUT_URI_UNIX;
+		p += 7;
+		if (!p[0]) {
+			fprintf(stderr, "[venc_config] ERROR: unix:// URI missing socket name\n");
+			return -1;
+		}
+		safe_strcpy(out->endpoint, sizeof(out->endpoint), p);
+		return 0;
+	}
+
+	if (strncmp(p, "shm://", 6) == 0) {
+		out->type = VENC_OUTPUT_URI_SHM;
+		p += 6;
+		if (!p[0]) {
+			fprintf(stderr, "[venc_config] ERROR: shm:// URI missing name\n");
+			return -1;
+		}
+		safe_strcpy(out->endpoint, sizeof(out->endpoint), p);
+		return 0;
+	}
+
+	fprintf(stderr, "[venc_config] ERROR: unsupported URI scheme in '%s' "
+		"(expected udp://, unix://, or shm://)\n", uri);
+	return -1;
 }
 
 /* ── Serialize to JSON ────────────────────────────────────────────────── */
@@ -592,6 +647,8 @@ static cJSON *config_to_cjson(const VencConfig *cfg)
 		cJSON_AddNumberToObject(vid, "gopSize", cfg->video0.gop_size);
 		cJSON_AddNumberToObject(vid, "qpDelta", cfg->video0.qp_delta);
 		cJSON_AddBoolToObject(vid, "frameLost", cfg->video0.frame_lost);
+		cJSON_AddNumberToObject(vid, "sceneThreshold", cfg->video0.scene_threshold);
+		cJSON_AddNumberToObject(vid, "sceneHoldoff", cfg->video0.scene_holdoff);
 	}
 
 	/* outgoing */

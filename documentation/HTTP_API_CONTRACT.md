@@ -15,7 +15,7 @@
   - `read_only` — cannot be changed via API.
 
 ## Contract Version
-- `contract_version`: `0.6.0`
+- `contract_version`: `0.6.1`
 - `status`: `active`
 
 ## Governance Rules
@@ -67,7 +67,7 @@
 Return app, backend, schema, and contract version information.
 
 ```bash
-curl http://192.168.2.10/api/v1/version
+curl http://<device-ip>/api/v1/version
 ```
 
 Response `200`:
@@ -88,7 +88,7 @@ Response `200`:
 Return the full active runtime config.
 
 ```bash
-curl http://192.168.2.10/api/v1/config
+curl http://<device-ip>/api/v1/config
 ```
 
 Response `200`:
@@ -101,9 +101,11 @@ Response `200`:
       "sensor": { "index": -1, "mode": -1, "unlockEnabled": true, "..." : "..." },
       "isp": { "sensorBin": "/etc/sensors/imx415_greg_fpvXVIII-gpt200.bin", "exposure": 9, "legacyAe": false, "aeFps": 15, "gainMax": 0, "awbMode": "auto", "awbCt": 5500 },
       "image": { "mirror": false, "flip": false, "rotate": 0 },
-      "video0": { "codec": "h265", "rcMode": "cbr", "fps": 90, "size": "1920x1080", "bitrate": 8192, "gopSize": 1.0, "qpDelta": 0 },
-      "outgoing": { "enabled": true, "server": "udp://192.168.2.20:5600", "streamMode": "rtp", "maxPayloadSize": 1400, "targetPacketRate": 0, "connectedUdp": false },
-      "fpv": { "roiEnabled": true, "roiQp": 0, "roiSteps": 2, "roiCenter": 0.25, "noiseLevel": 0 }
+      "video0": { "codec": "h265", "rcMode": "cbr", "fps": 90, "size": "1920x1080", "bitrate": 8192, "gopSize": 1.0, "qpDelta": 0, "sceneThreshold": 0, "sceneHoldoff": 2 },
+      "outgoing": { "enabled": true, "server": "udp://192.168.2.20:5600", "streamMode": "rtp", "maxPayloadSize": 1400, "connectedUdp": false },
+      "fpv": { "roiEnabled": true, "roiQp": 0, "roiSteps": 2, "roiCenter": 0.25, "noiseLevel": 0 },
+      "record": { "enabled": false, "mode": "off", "dir": "/tmp/sdcard", "format": "ts", "maxSeconds": 300, "maxMB": 500 },
+      "debug": { "showOsd": false }
     }
   }
 }
@@ -114,7 +116,7 @@ Response `200`:
 Return per-field mutability and backend support.
 
 ```bash
-curl http://192.168.2.10/api/v1/capabilities
+curl http://<device-ip>/api/v1/capabilities
 ```
 
 Response `200`:
@@ -129,12 +131,13 @@ Response `200`:
       "video0.qp_delta": { "mutability": "live", "supported": true },
       "video0.codec": { "mutability": "restart_required", "supported": true },
       "video0.size": { "mutability": "restart_required", "supported": true },
+      "video0.scene_threshold": { "mutability": "restart_required", "supported": true },
+      "video0.scene_holdoff": { "mutability": "restart_required", "supported": true },
       "system.verbose": { "mutability": "live", "supported": true },
       "isp.exposure": { "mutability": "live", "supported": true },
       "outgoing.enabled": { "mutability": "live", "supported": true },
       "outgoing.server": { "mutability": "live", "supported": true },
       "outgoing.stream_mode": { "mutability": "restart_required", "supported": true },
-      "outgoing.target_pkt_rate": { "mutability": "restart_required", "supported": true },
       "outgoing.connected_udp": { "mutability": "restart_required", "supported": true },
       "fpv.roi_qp": { "mutability": "live", "supported": true }
     }
@@ -143,12 +146,16 @@ Response `200`:
 ```
 (truncated — all fields listed in actual response)
 
+`supported` is backend-specific. On Star6E, `video0.scene_threshold` / `video0.scene_holdoff` report
+`supported: true`; on Maruko they report `supported: false` and writes are
+rejected with `501 not_implemented`.
+
 ### `GET /api/v1/config.json`
 
 Majestic-compatible alias of `/api/v1/config`.
 
 ```bash
-curl http://192.168.2.10/api/v1/config.json
+curl http://<device-ip>/api/v1/config.json
 ```
 
 ### `GET /api/v1/get?<field_name>`
@@ -157,16 +164,16 @@ Read a single config field. The field name is the query parameter key (no value 
 
 ```bash
 # Read current bitrate
-curl "http://192.168.2.10/api/v1/get?video0.bitrate"
+curl "http://<device-ip>/api/v1/get?video0.bitrate"
 
 # Read current codec
-curl "http://192.168.2.10/api/v1/get?video0.codec"
+curl "http://<device-ip>/api/v1/get?video0.codec"
 
 # Read current qpDelta
-curl "http://192.168.2.10/api/v1/get?video0.qp_delta"
+curl "http://<device-ip>/api/v1/get?video0.qp_delta"
 
 # Read a string field
-curl "http://192.168.2.10/api/v1/get?isp.sensor_bin"
+curl "http://<device-ip>/api/v1/get?isp.sensor_bin"
 ```
 
 Response `200`:
@@ -197,7 +204,8 @@ Majestic-style camelCase aliases are also accepted for selected fields,
 including `fpv.roiQp`, `fpv.roiEnabled`, `fpv.roiSteps`, `fpv.roiCenter`,
 `fpv.noiseLevel`, `isp.sensorBin`, `isp.awbMode`, `isp.awbCt`,
 `video0.rcMode`, `video0.gopSize`, `video0.qpDelta`,
-`outgoing.maxPayloadSize`, `outgoing.targetPacketRate`,
+`video0.sceneThreshold`, `video0.sceneHoldoff`,
+`outgoing.maxPayloadSize`,
 `outgoing.audioPort`, `system.webPort`, and `system.overclockLevel`.
 
 ### `GET /api/v1/set?<field_name>=<value>`
@@ -208,21 +216,40 @@ Write a config field. The field name is the query key, the new value follows `=`
 
 ```bash
 # Change bitrate to 4096 kbps
-curl "http://192.168.2.10/api/v1/set?video0.bitrate=4096"
+curl "http://<device-ip>/api/v1/set?video0.bitrate=4096"
 
 # Change FPS
-curl "http://192.168.2.10/api/v1/set?video0.fps=60"
+curl "http://<device-ip>/api/v1/set?video0.fps=60"
 
 # Change GOP interval (seconds between keyframes; 0 = all-intra)
-curl "http://192.168.2.10/api/v1/set?video0.gop_size=0.5"
+curl "http://<device-ip>/api/v1/set?video0.gop_size=0.5"
 
 # Bias relative I-frame QP (Majestic-compatible range: -12..12)
-curl "http://192.168.2.10/api/v1/set?video0.qp_delta=-4"
+curl "http://<device-ip>/api/v1/set?video0.qp_delta=-4"
+
+# Apply multiple live fields atomically in one request
+curl "http://<device-ip>/api/v1/set?video0.bitrate=4096&system.verbose=true"
+
+# Coupled live timing changes can be sent together
+curl "http://<device-ip>/api/v1/set?video0.fps=30&video0.gopSize=1.0"
 ```
+
+When `video0.scene_threshold` is non-zero, the inline scene detector tracks
+frame size EMA and requests IDR after scene change spikes settle.
+
+If a `GET /api/v1/set` request contains multiple `key=value` pairs joined by
+`&`, every field must be live. Mixed live + restart requests are rejected.
+Duplicate fields are also rejected after alias canonicalization, so
+`video0.qp_delta` and `video0.qpDelta` cannot appear in the same batch.
 
 Response `200`:
 ```json
 {"ok":true,"data":{"field":"video0.bitrate","value":4096}}
+```
+
+Response `200` for multi-set:
+```json
+{"ok":true,"data":{"applied":[{"field":"video0.bitrate","value":4096},{"field":"system.verbose","value":true}]}}
 ```
 
 **Restart-required fields** (`mutability: "restart_required"`) trigger an automatic
@@ -230,12 +257,15 @@ pipeline reinit (sensor→VIF→VPE→VENC teardown and rebuild):
 
 ```bash
 # Change resolution (single call, triggers one pipeline reinit)
-curl "http://192.168.2.10/api/v1/set?video0.size=1280x720"
+curl "http://<device-ip>/api/v1/set?video0.size=1280x720"
 
 # Preset shortcuts also work
-curl "http://192.168.2.10/api/v1/set?video0.size=720p"
-curl "http://192.168.2.10/api/v1/set?video0.size=1080p"
-curl "http://192.168.2.10/api/v1/set?video0.size=4MP"
+curl "http://<device-ip>/api/v1/set?video0.size=720p"
+curl "http://<device-ip>/api/v1/set?video0.size=1080p"
+curl "http://<device-ip>/api/v1/set?video0.size=4MP"
+
+# Enable Star6E scene-change IDR control
+curl "http://<device-ip>/api/v1/set?video0.scene_threshold=150"
 ```
 
 Response `200` (includes `"reinit_pending": true`):
@@ -243,25 +273,45 @@ Response `200` (includes `"reinit_pending": true`):
 {"ok":true,"data":{"field":"video0.size","value":"1280x720","reinit_pending":true}}
 ```
 
-> **Debounce:** When a reinit is triggered, the main loop waits 200ms before acting.
-> This allows multiple restart-required field changes sent in quick succession to
-> coalesce into a single pipeline teardown/rebuild.
+Restart/reinit writes stay single-field by design. Even though the main loop
+debounces reinit requests, clients should send restart-required changes one at
+a time and let each accepted write schedule the pipeline rebuild.
+
+Adaptive control usage notes:
+- Keep `video0.scene_threshold=0` for fixed-GOP workflows and drive keyframe
+  interval through `video0.gop_size`.
+- On the current Star6E IMX335 bench, a practical starting point is:
+  `video0.sceneThreshold=150`, `video0.sceneHoldoff=2`.
+- Tune threshold first, holdoff second. In practice, threshold changes are
+  a safer first response than raising holdoff.
+
+Example Star6E tuning sequence:
+
+```bash
+curl "http://<device-ip>/api/v1/set?video0.sceneThreshold=150"
+curl "http://<device-ip>/api/v1/set?video0.sceneHoldoff=2"
+```
 
 **Validation errors** — some values are rejected before being applied:
 
 ```bash
-# Attempt to switch to h264 (not yet supported on star6e RTP)
-curl "http://192.168.2.10/api/v1/set?video0.codec=h264"
+# Attempt to switch Star6E RTP mode to h264
+curl "http://<device-ip>/api/v1/set?video0.codec=h264"
 ```
 
 Error `409`:
 ```json
-{"ok":false,"error":{"code":"validation_failed","message":"only h265 codec is currently supported"}}
+{"ok":false,"error":{"code":"validation_failed","message":"star6e RTP mode currently supports h265 only"}}
 ```
 
 Error `501` — apply callback not available:
 ```json
 {"ok":false,"error":{"code":"not_implemented","message":"apply callback not available"}}
+```
+
+Error `400` — multi-set included a restart-required field:
+```json
+{"ok":false,"error":{"code":"invalid_request","message":"multi-set only supports live fields; restart-required fields must be set one at a time"}}
 ```
 
 The same camelCase aliases listed above are accepted here for
@@ -280,7 +330,7 @@ Majestic-oriented clients.
 Return the configured target FPS from the active runtime config.
 
 ```bash
-curl http://192.168.2.10/api/v1/fps/config
+curl http://<device-ip>/api/v1/fps/config
 ```
 
 Response `200`:
@@ -294,7 +344,7 @@ Return the live/applied FPS reported by the active backend. If a backend does
 not expose a distinct live value, this falls back to the configured FPS.
 
 ```bash
-curl http://192.168.2.10/api/v1/fps/live
+curl http://<device-ip>/api/v1/fps/live
 ```
 
 Response `200`:
@@ -308,10 +358,10 @@ The `outgoing.enabled` field controls whether encoded frames are sent over UDP.
 
 ```bash
 # Enable output (starts sending, restores FPS, issues IDR)
-curl "http://192.168.2.10/api/v1/set?outgoing.enabled=true"
+curl "http://<device-ip>/api/v1/set?outgoing.enabled=true"
 
 # Disable output (stops sending, reduces FPS to 5fps idle)
-curl "http://192.168.2.10/api/v1/set?outgoing.enabled=false"
+curl "http://<device-ip>/api/v1/set?outgoing.enabled=false"
 ```
 
 **Behavior when disabled:**
@@ -329,27 +379,34 @@ The `outgoing.server` field can be changed at runtime to redirect the stream.
 
 ```bash
 # Redirect stream to a different GCS
-curl "http://192.168.2.10/api/v1/set?outgoing.server=udp://192.168.1.100:5600"
+curl "http://<device-ip>/api/v1/set?outgoing.server=udp://<receiver-ip>:5600"
 ```
 
+- Accepted URI schemes:
+  - `udp://HOST:PORT` — standard UDP datagram output
+  - `unix://NAME` — Linux abstract Unix datagram socket `@NAME`
+  - `shm://NAME` — shared-memory RTP ring buffer
 - No pipeline restart required.
 - An IDR keyframe is issued after the change for stream continuity.
-- If `connectedUdp` is enabled, the socket is re-connected to the new destination.
-- Only `udp://` scheme is accepted.
+- If `connectedUdp` is enabled, the UDP socket is re-connected to the new destination.
+- Live redirects support `udp://` and `unix://`. Live switch to `shm://` is not supported.
+- `connectedUdp` applies only to `udp://`.
+- `shm://` remains RTP-only. It cannot share audio; use a nonzero `audioPort` for separate UDP audio.
+- On Star6E, `audioPort=0` piggybacks on the active video destination for both `udp://` and `unix://`.
+- On Star6E, a nonzero `audioPort` keeps audio on a dedicated UDP port. With `unix://` or `shm://` video output, that dedicated audio port is sent to `127.0.0.1:<audioPort>`.
 
 ### Stream Mode and Send Feedback
 
 ```bash
 # These require pipeline restart
-curl "http://192.168.2.10/api/v1/set?outgoing.stream_mode=compact"
-curl "http://192.168.2.10/api/v1/set?outgoing.connected_udp=true"
+curl "http://<device-ip>/api/v1/set?outgoing.stream_mode=compact"
+curl "http://<device-ip>/api/v1/set?outgoing.connected_udp=true"
 ```
 
 - `outgoing.stream_mode`: `"rtp"` (default) or `"compact"`. Determines packetization format.
 - `outgoing.max_payload_size`: Maximum RTP payload size in bytes. Default `1400`.
   Applies to both RTP (FU fragmentation threshold) and compact modes. Values above 1400
   are supported for jumbo-frame networks.
-- `outgoing.target_pkt_rate`: Target packets-per-second for adaptive RTP payload sizing.
   Default `0` (disabled — uses fixed `maxPayloadSize`). When non-zero, the adaptive
   algorithm adjusts the effective payload size to hit this target, clamped to
   `[1000, maxPayloadSize]`.
@@ -365,13 +422,13 @@ layer between VPE and VENC drops frames to match the requested rate.
 
 ```bash
 # On a 90fps sensor mode: set output to 30fps (sensor stays at 90, VENC receives 30)
-curl "http://192.168.2.10/api/v1/set?video0.fps=30"
+curl "http://<device-ip>/api/v1/set?video0.fps=30"
 
 # Set output to 60fps
-curl "http://192.168.2.10/api/v1/set?video0.fps=60"
+curl "http://<device-ip>/api/v1/set?video0.fps=60"
 
 # Restore full sensor rate
-curl "http://192.168.2.10/api/v1/set?video0.fps=90"
+curl "http://<device-ip>/api/v1/set?video0.fps=90"
 ```
 
 **Clamping:** If the requested FPS exceeds the current sensor mode's `maxFps`, the value
@@ -395,7 +452,7 @@ Trigger a full pipeline reinit: reload config from disk (`/etc/venc.json`) and r
 the pipeline. Equivalent to sending `SIGHUP` to the process.
 
 ```bash
-curl http://192.168.2.10/api/v1/restart
+curl http://<device-ip>/api/v1/restart
 ```
 
 Response `200`:
@@ -408,7 +465,7 @@ Response `200`:
 Return live AE diagnostics from the active backend.
 
 ```bash
-curl http://192.168.2.10/api/v1/ae
+curl http://<device-ip>/api/v1/ae
 ```
 
 Response `200`:
@@ -436,7 +493,7 @@ Error `501`:
 Return live AWB diagnostics from the active backend.
 
 ```bash
-curl http://192.168.2.10/api/v1/awb
+curl http://<device-ip>/api/v1/awb
 ```
 
 Error `501`:
@@ -449,7 +506,7 @@ Error `501`:
 Query all ISP IQ parameter values. Always available on Star6E backend.
 
 ```bash
-curl http://192.168.2.10/api/v1/iq
+curl http://<device-ip>/api/v1/iq
 ```
 
 Response `200`:
@@ -499,20 +556,20 @@ enable/disable toggling via the `.enabled` virtual field:
 
 ```bash
 # Simple scalar
-curl "http://192.168.2.10/api/v1/iq/set?contrast=70"
+curl "http://<device-ip>/api/v1/iq/set?contrast=70"
 
 # Dot-notation for sub-field
-curl "http://192.168.2.10/api/v1/iq/set?colortrans.y_ofst=200"
+curl "http://<device-ip>/api/v1/iq/set?colortrans.y_ofst=200"
 
 # Array value (comma-separated)
-curl "http://192.168.2.10/api/v1/iq/set?colortrans.matrix=23,45,9,1005,987,56,56,977,1015"
+curl "http://<device-ip>/api/v1/iq/set?colortrans.matrix=23,45,9,1005,987,56,56,977,1015"
 
 # Enable/disable toggle (non-bool params only)
-curl "http://192.168.2.10/api/v1/iq/set?colortrans.enabled=0"
-curl "http://192.168.2.10/api/v1/iq/set?crosstalk.enabled=1"
+curl "http://<device-ip>/api/v1/iq/set?colortrans.enabled=0"
+curl "http://<device-ip>/api/v1/iq/set?crosstalk.enabled=1"
 
 # Bool toggle
-curl "http://192.168.2.10/api/v1/iq/set?color_to_gray=1"
+curl "http://<device-ip>/api/v1/iq/set?color_to_gray=1"
 ```
 
 Response `200`:
@@ -531,11 +588,11 @@ will be disabled on the ISP.
 ```bash
 # Full import from exported file
 curl -X POST -H "Content-Type: application/json" \
-  -d @my_tuning.json http://192.168.2.10/api/v1/iq/import
+  -d @my_tuning.json http://<device-ip>/api/v1/iq/import
 
 # Partial import — only specific params
 echo '{"lightness":{"value":75},"demosaic":{"fields":{"dir_thrd":30}}}' | \
-  curl -X POST -H "Content-Type: application/json" -d @- http://192.168.2.10/api/v1/iq/import
+  curl -X POST -H "Content-Type: application/json" -d @- http://<device-ip>/api/v1/iq/import
 ```
 
 Response `200`:
@@ -611,7 +668,7 @@ decompress the gzip response automatically.
 Return a compact Prometheus-style ISP metrics snapshot.
 
 ```bash
-curl http://192.168.2.10/metrics/isp
+curl http://<device-ip>/metrics/isp
 ```
 
 Response `200`:
@@ -637,10 +694,10 @@ default recording directory (from config `record.dir`, default `/media`).
 
 ```bash
 # Start recording with default dir
-wget -q -O- "http://192.168.2.10/api/v1/record/start"
+wget -q -O- "http://<device-ip>/api/v1/record/start"
 
 # Start with custom directory
-wget -q -O- "http://192.168.2.10/api/v1/record/start?dir=/media/clips"
+wget -q -O- "http://<device-ip>/api/v1/record/start?dir=/media/clips"
 ```
 
 Response `200`:
@@ -657,7 +714,7 @@ with audio) or `"hevc"` (raw HEVC NAL stream). File rotation is controlled by
 Stop SD card recording.
 
 ```bash
-wget -q -O- "http://192.168.2.10/api/v1/record/stop"
+wget -q -O- "http://<device-ip>/api/v1/record/stop"
 ```
 
 Response `200`:
@@ -670,7 +727,7 @@ Response `200`:
 Query recording status.
 
 ```bash
-wget -q -O- "http://192.168.2.10/api/v1/record/status"
+wget -q -O- "http://<device-ip>/api/v1/record/status"
 ```
 
 Response `200`:
@@ -694,10 +751,10 @@ Response `200`:
 
 ### `GET /request/idr`
 
-Request an immediate IDR (keyframe) from the encoder.
+Request an IDR (keyframe) from the encoder.
 
 ```bash
-curl http://192.168.2.10/request/idr
+curl http://<device-ip>/request/idr
 ```
 
 Response `200`:
@@ -705,13 +762,17 @@ Response `200`:
 {"ok":true,"data":{"idr":true}}
 ```
 
+If `outgoing.sidecar_port` is enabled at the same time, Star6E also appends
+the scene-detector telemetry trailer to sidecar `FRAME` packets. That
+is the intended external interface for per-frame size/type/complexity observations.
+
 ### `GET /api/v1/dual/status`
 
 Query the secondary VENC channel status. Only available when dual or dual-stream
 mode is active.
 
 ```bash
-wget -q -O- "http://192.168.2.10/api/v1/dual/status"
+wget -q -O- "http://<device-ip>/api/v1/dual/status"
 ```
 
 Response `200`:
@@ -735,10 +796,10 @@ Live-change secondary VENC channel parameters. Supported parameters:
 
 ```bash
 # Change ch1 bitrate to 10 Mbps
-wget -q -O- "http://192.168.2.10/api/v1/dual/set?bitrate=10000"
+wget -q -O- "http://<device-ip>/api/v1/dual/set?bitrate=10000"
 
 # Change ch1 GOP to 1 second (120 frames at 120fps)
-wget -q -O- "http://192.168.2.10/api/v1/dual/set?gop=1.0"
+wget -q -O- "http://<device-ip>/api/v1/dual/set?gop=1.0"
 ```
 
 Response `200`:
@@ -759,7 +820,7 @@ Error `404` — dual VENC not active.
 Request an IDR keyframe on the secondary VENC channel.
 
 ```bash
-wget -q -O- "http://192.168.2.10/api/v1/dual/idr"
+wget -q -O- "http://<device-ip>/api/v1/dual/idr"
 ```
 
 Response `200`:
@@ -779,7 +840,7 @@ In addition to the `/api/v1/restart` endpoint, the pipeline can be reinited by s
 killall -HUP venc
 
 # Remotely via SSH
-ssh root@192.168.2.10 "killall -HUP venc"
+ssh root@<device-ip> "killall -HUP venc"
 ```
 
 Behavior:
@@ -795,8 +856,9 @@ Behavior:
    A reboot always restores the on-disk config. To persist changes, edit
    `/etc/venc.json` directly and then `SIGHUP` or call `/api/v1/restart`.
 
-2. **Codec restriction.** Only `h265` is currently supported on Star6E RTP mode.
-   Attempting to set `video0.codec=h264` returns a `409` error.
+2. **Codec restriction is backend-specific.** Star6E RTP mode requires
+   `video0.codec=h265`, so attempting to set `video0.codec=h264` there returns
+   a `409` error. Maruko accepts both `h264` and `h265`.
 
 3. **BusyBox compatibility.** All endpoints use `GET` method so they work with
    BusyBox `wget` (which only supports GET):
@@ -846,7 +908,6 @@ Behavior:
     `GET /api/v1/get` and `GET /api/v1/set`.
 - `0.2.1`:
   - `outgoing.max_payload_size` now applies to RTP mode (was only used by compact mode).
-  - Added `outgoing.targetPacketRate` (MUT_RESTART): configurable adaptive pkt/s target.
     Default 850. Set to 0 to disable adaptive sizing.
 - `0.2.0`:
   - Added `outgoing.enabled` (MUT_LIVE): enable/disable UDP output with FPS idle.
@@ -854,7 +915,7 @@ Behavior:
   - Added `outgoing.streamMode` (MUT_RESTART): explicit stream mode selection.
   - Added `outgoing.connectedUdp` (MUT_RESTART): connected UDP error reporting.
   - IDR keyframe issued on output enable, destination change, and bitrate change.
-  - Only `udp://` scheme is accepted for server URIs.
+  - Server URIs now accept `udp://`, `unix://`, and `shm://`.
 - `0.1.3`:
   - Documented live FPS control behavior (hardware bind decimation, clamping, mode switching limitation).
   - `video0.fps` set via API now uses MI_SYS_BindChnPort2 rebind instead of /proc write.
