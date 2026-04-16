@@ -12,12 +12,15 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #ifdef __linux__
 #include <linux/futex.h>
 #include <sys/syscall.h>
 #include <time.h>
-#include <unistd.h>
 #endif
 
 #define VENC_RING_MAGIC   0x56454E43  /* "VENC" */
@@ -209,6 +212,42 @@ static inline int venc_ring_read_wait(venc_ring_t *r,
 		if (timeout_ms > 0)
 			return -1;  /* timeout */
 	}
+}
+
+/* ── Lightweight epoch probe (consumer) ──────────────────────────────── */
+
+/* Open the SHM name, read just the header prefix, and return the epoch
+ * if the ring looks valid (correct magic + init_complete == 1).
+ * Returns 0 on any failure.  Costs 3 syscalls, no mmap/allocation. */
+static inline uint32_t venc_ring_probe_epoch(const char *shm_name)
+{
+	if (!shm_name || !shm_name[0])
+		return 0;
+
+	char name[256];
+	if (shm_name[0] == '/')
+		snprintf(name, sizeof(name), "%s", shm_name);
+	else
+		snprintf(name, sizeof(name), "/%s", shm_name);
+
+	int fd = shm_open(name, O_RDONLY, 0);
+	if (fd < 0)
+		return 0;
+
+	/* Read magic(4) + version(4) + slot_count(4) + slot_data_size(4) +
+	 * total_size(4) + epoch(4) + init_complete(4) = 28 bytes */
+	uint32_t hdr[7];
+	ssize_t n = read(fd, hdr, sizeof(hdr));
+	close(fd);
+
+	if (n != (ssize_t)sizeof(hdr))
+		return 0;
+	if (hdr[0] != VENC_RING_MAGIC)
+		return 0;
+	if (hdr[6] != 1)  /* init_complete */
+		return 0;
+
+	return hdr[5];  /* epoch */
 }
 
 #endif /* VENC_RING_H */

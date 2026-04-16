@@ -12,6 +12,9 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <errno.h>
 
 #include "venc_ring.h"
 #include "test_helpers.h"
@@ -546,6 +549,166 @@ static int test_destroy_clears_init(void)
 	return failures;
 }
 
+/* ── Epoch probe ───────────────────────────────────────────────────── */
+
+static int test_probe_epoch(void)
+{
+	int failures = 0;
+
+	venc_ring_t *r = venc_ring_create("test_probe", 4, 1400);
+	CHECK("probe_create", r != NULL);
+
+	/* Probe should return the same epoch as the ring header */
+	uint32_t probed = venc_ring_probe_epoch("test_probe");
+	CHECK("probe_matches", probed == r->hdr->epoch);
+	CHECK("probe_nonzero", probed != 0);
+
+	/* Clear init_complete — probe should return 0 (not ready) */
+	__atomic_store_n(&r->hdr->init_complete, 0, __ATOMIC_RELEASE);
+	CHECK("probe_not_ready", venc_ring_probe_epoch("test_probe") == 0);
+	__atomic_store_n(&r->hdr->init_complete, 1, __ATOMIC_RELEASE);
+
+	/* Destroy — probe should return 0 (SHM unlinked) */
+	venc_ring_destroy(r);
+	CHECK("probe_after_destroy", venc_ring_probe_epoch("test_probe") == 0);
+
+	/* Non-existent name */
+	CHECK("probe_missing", venc_ring_probe_epoch("test_no_such_ring") == 0);
+
+	/* NULL / empty */
+	CHECK("probe_null", venc_ring_probe_epoch(NULL) == 0);
+	CHECK("probe_empty", venc_ring_probe_epoch("") == 0);
+
+	return failures;
+}
+
+/* ── Epoch changes on recreate (unlink + O_EXCL) ──────────────────── */
+
+static int test_probe_epoch_restart(void)
+{
+	int failures = 0;
+
+	venc_ring_t *r1 = venc_ring_create("test_epoch_rst", 4, 1400);
+	CHECK("epoch_rst_create1", r1 != NULL);
+	uint32_t epoch1 = r1->hdr->epoch;
+
+	/* Destroy (unlinks SHM) */
+	venc_ring_destroy(r1);
+
+	/* Small delay to ensure monotonic clock advances at least 1ms */
+	usleep(2000);
+
+	/* Re-create — new epoch from CLOCK_MONOTONIC */
+	venc_ring_t *r2 = venc_ring_create("test_epoch_rst", 4, 1400);
+	CHECK("epoch_rst_create2", r2 != NULL);
+	uint32_t epoch2 = r2->hdr->epoch;
+
+	CHECK("epoch_rst_different", epoch1 != epoch2);
+
+	/* Probe should see the new epoch */
+	uint32_t probed = venc_ring_probe_epoch("test_epoch_rst");
+	CHECK("epoch_rst_probe", probed == epoch2);
+
+	venc_ring_destroy(r2);
+	return failures;
+}
+
+/* ── SIGBUS safety: old consumer mmap survives producer recreate ──── */
+
+static int test_create_no_sigbus(void)
+{
+	int failures = 0;
+
+	venc_ring_t *producer = venc_ring_create("test_sigbus", 4, 1400);
+	CHECK("sigbus_create", producer != NULL);
+	uint32_t epoch1 = producer->hdr->epoch;
+
+	/* Attach a consumer — gets its own mmap */
+	venc_ring_t *consumer = venc_ring_attach("test_sigbus");
+	CHECK("sigbus_attach", consumer != NULL);
+
+	/* Fork: child holds the consumer mmap, parent recreates the SHM.
+	 * With O_TRUNC this would SIGBUS the child.
+	 * With unlink+O_EXCL the child's mmap stays valid. */
+	pid_t pid = fork();
+	if (pid == 0) {
+		/* Child: wait for parent to recreate, then access old mmap */
+		usleep(50000);  /* 50ms — parent should have recreated by now */
+
+		/* Access the old mmap — should NOT SIGBUS.
+		 * With the old O_TRUNC approach, this line would crash. */
+		uint32_t ic = __atomic_load_n(&consumer->hdr->init_complete, __ATOMIC_ACQUIRE);
+		(void)ic;
+
+		/* Also verify epoch is still the OLD one (different inode) */
+		uint32_t old_epoch = consumer->hdr->epoch;
+		_exit(old_epoch == epoch1 ? 0 : 1);
+	}
+
+	/* Parent: destroy old producer, recreate with new SHM inode */
+	venc_ring_destroy(producer);
+	usleep(2000);  /* ensure clock advances */
+	venc_ring_t *producer2 = venc_ring_create("test_sigbus", 4, 1400);
+	CHECK("sigbus_recreate", producer2 != NULL);
+
+	/* Wait for child */
+	int status = 0;
+	waitpid(pid, &status, 0);
+
+	if (WIFSIGNALED(status)) {
+		int sig = WTERMSIG(status);
+		printf("  FAIL  sigbus_child_signal (killed by signal %d%s)\n",
+		       sig, sig == SIGBUS ? " SIGBUS" : "");
+		failures++;
+		g_test_fail_count++;
+	} else if (WIFEXITED(status)) {
+		int code = WEXITSTATUS(status);
+		CHECK("sigbus_child_ok", code == 0);
+	} else {
+		printf("  FAIL  sigbus_child_unknown_status\n");
+		failures++;
+		g_test_fail_count++;
+	}
+
+	venc_ring_destroy(consumer);
+	venc_ring_destroy(producer2);
+	return failures;
+}
+
+/* ── O_EXCL: two creates race ─────────────────────────────────────── */
+
+static int test_create_exclusive(void)
+{
+	int failures = 0;
+
+	/* Clean slate */
+	shm_unlink("/test_excl");
+
+	venc_ring_t *r1 = venc_ring_create("test_excl", 4, 1400);
+	CHECK("excl_first", r1 != NULL);
+	uint32_t epoch1 = r1->hdr->epoch;
+
+	/* Second create from same process: unlinks first, creates new.
+	 * The old r1 mmap still points to the old (now unlinked) inode. */
+	usleep(2000);
+	venc_ring_t *r2 = venc_ring_create("test_excl", 4, 1400);
+	CHECK("excl_second_ok", r2 != NULL);
+	CHECK("excl_new_epoch", r2->hdr->epoch != epoch1);
+
+	/* Old consumer mmap (r1) still readable — old inode persists */
+	CHECK("excl_old_still_valid", r1->hdr->magic == VENC_RING_MAGIC);
+
+	venc_ring_destroy(r1);
+	venc_ring_destroy(r2);
+
+	/* After destroy, create should succeed again */
+	venc_ring_t *r3 = venc_ring_create("test_excl", 4, 1400);
+	CHECK("excl_after_destroy", r3 != NULL);
+	venc_ring_destroy(r3);
+
+	return failures;
+}
+
 /* ── Entry point ────────────────────────────────────────────────────── */
 
 int test_venc_ring(void)
@@ -568,6 +731,10 @@ int test_venc_ring(void)
 	failures += test_stats_counters();
 	failures += test_write_u16_overflow();
 	failures += test_destroy_clears_init();
+	failures += test_probe_epoch();
+	failures += test_probe_epoch_restart();
+	failures += test_create_no_sigbus();
+	failures += test_create_exclusive();
 
 	return failures;
 }

@@ -50,7 +50,14 @@ venc_ring_t *venc_ring_create(const char *shm_name, uint32_t slot_count,
 	else
 		snprintf(name, sizeof(name), "/%s", shm_name);
 
-	int fd = shm_open(name, O_CREAT | O_RDWR | O_TRUNC, 0666);
+	/* Unlink first, then create fresh.  The old inode (and consumer
+	 * mmaps of it) survives until all references are released — this
+	 * avoids SIGBUS when the consumer still holds a mapping. */
+	if (shm_unlink(name) != 0 && errno != ENOENT)
+		fprintf(stderr, "[venc_ring] shm_unlink(%s) warning: %s\n",
+		        name, strerror(errno));
+
+	int fd = shm_open(name, O_CREAT | O_RDWR | O_EXCL, 0666);
 	if (fd < 0) {
 		fprintf(stderr, "[venc_ring] shm_open(%s) failed: %s\n",
 		        name, strerror(errno));
