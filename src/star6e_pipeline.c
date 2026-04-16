@@ -52,6 +52,7 @@ static void star6e_pipeline_reset(Star6ePipelineState *state)
 
 	star6e_video_reset(&state->video);
 	memset(state, 0, sizeof(*state));
+	state->venc_fd = -1;
 	star6e_output_reset(&state->output);
 }
 
@@ -984,6 +985,10 @@ static int bind_and_finalize_pipeline(Star6ePipelineState *state,
 	state->bound_vpe_venc = 1;
 	MI_SYS_SetChnOutputPortDepth(&state->venc_port, 1, 3);
 
+	state->venc_fd = MI_VENC_GetFd(state->venc_channel);
+	if (state->venc_fd < 0)
+		printf("> note: MI_VENC_GetFd unavailable, using poll fallback\n");
+
 	if (star6e_output_init(&state->output, &pconf->output_setup) != 0) {
 		star6e_output_teardown(&state->output);
 		MI_SYS_UnBindChnPort(&state->vpe_port, &state->venc_port);
@@ -1227,6 +1232,10 @@ void star6e_pipeline_stop(Star6ePipelineState *state)
 		free(state->dual);
 		state->dual = NULL;
 	}
+	if (state->venc_fd >= 0) {
+		MI_VENC_CloseFd(state->venc_channel);
+		state->venc_fd = -1;
+	}
 	MI_VENC_DestroyChn(state->venc_channel);
 	free(state->stream_packs);
 	state->stream_packs = NULL;
@@ -1296,6 +1305,10 @@ static void star6e_pipeline_stop_venc_level(Star6ePipelineState *state)
 		free(state->dual->stream_packs);
 		free(state->dual);
 		state->dual = NULL;
+	}
+	if (state->venc_fd >= 0) {
+		MI_VENC_CloseFd(state->venc_channel);
+		state->venc_fd = -1;
 	}
 	MI_VENC_DestroyChn(state->venc_channel);
 

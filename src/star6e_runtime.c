@@ -775,6 +775,40 @@ static int star6e_runtime_process_stream(Star6eRunnerContext *ctx,
 	MI_VENC_Stream_t stream = {0};
 	int ret;
 
+	/* Wait for encoder output.  When the VENC fd is available, use
+	 * poll() for sub-ms frame notification instead of 1ms polling.
+	 * The sidecar fd is included so subscribe messages are still
+	 * serviced with low latency. */
+	if (ps->venc_fd >= 0) {
+		struct pollfd pfds[2];
+		int nfds = 0;
+		int pr;
+
+		pfds[nfds].fd = ps->venc_fd;
+		pfds[nfds].events = POLLIN;
+		nfds++;
+		if (ps->video.sidecar.fd >= 0) {
+			pfds[nfds].fd = ps->video.sidecar.fd;
+			pfds[nfds].events = POLLIN;
+			nfds++;
+		}
+
+		pr = poll(pfds, (nfds_t)nfds, 33);
+		if (pr <= 0) {
+			/* Timeout or EINTR — service cus3a, retry next iteration */
+			star6e_pipeline_cus3a_tick(&g_sdk_quiet, cus3a_ts_last);
+			return 0;
+		}
+		/* Service sidecar if readable */
+		if (nfds > 1 && (pfds[1].revents & POLLIN))
+			rtp_sidecar_poll(&ps->video.sidecar);
+		/* If only sidecar fired (no venc data), retry */
+		if (!(pfds[0].revents & POLLIN)) {
+			star6e_pipeline_cus3a_tick(&g_sdk_quiet, cus3a_ts_last);
+			return 0;
+		}
+	}
+
 	ret = MI_VENC_Query(ps->venc_channel, &stat);
 	if (ret != 0) {
 		if ((++(*idle_counter) % 60) == 0) {
@@ -792,7 +826,8 @@ static int star6e_runtime_process_stream(Star6eRunnerContext *ctx,
 			fflush(stdout);
 		}
 		star6e_pipeline_cus3a_tick(&g_sdk_quiet, cus3a_ts_last);
-		idle_wait(&ps->video.sidecar, 1);
+		if (ps->venc_fd < 0)
+			idle_wait(&ps->video.sidecar, 1);
 		return 0;
 	}
 	*idle_counter = 0;
@@ -816,7 +851,8 @@ static int star6e_runtime_process_stream(Star6eRunnerContext *ctx,
 	ret = MI_VENC_GetStream(ps->venc_channel, &stream, 40);
 	if (ret != 0) {
 		if (ret == -EAGAIN || ret == EAGAIN) {
-			idle_wait(&ps->video.sidecar, 2);
+			if (ps->venc_fd < 0)
+				idle_wait(&ps->video.sidecar, 2);
 			return 0;
 		}
 		fprintf(stderr, "ERROR: MI_VENC_GetStream failed %d\n", ret);
@@ -840,6 +876,15 @@ static int star6e_runtime_process_stream(Star6eRunnerContext *ctx,
 		star6e_recorder_write_frame(&ps->recorder, &stream);
 		star6e_ts_recorder_write_stream(&ps->ts_recorder, &stream);
 	}
+
+	/* Release the encoder buffer as early as possible.  The VENC
+	 * output port depth is (1, 3) — holding this buffer blocks the
+	 * next frame from being dequeued.  Everything below this point
+	 * does not read from the stream. */
+	MI_VENC_ReleaseStream(ps->venc_channel, &stream);
+
+	/* ch1 frames are now drained by the dedicated recording thread
+	 * (dual_rec_thread_fn) — no polling needed here. */
 
 	/* Check HTTP record control flags.
 	 * In dual mode, the recording thread owns the ts_recorder
@@ -960,11 +1005,6 @@ static int star6e_runtime_process_stream(Star6eRunnerContext *ctx,
 
 		debug_osd_end_frame(ps->debug_osd);
 	}
-
-	MI_VENC_ReleaseStream(ps->venc_channel, &stream);
-
-	/* ch1 frames are now drained by the dedicated recording thread
-	 * (dual_rec_thread_fn) — no polling needed here. */
 
 	star6e_pipeline_cus3a_tick(&g_sdk_quiet, cus3a_ts_last);
 	return 0;

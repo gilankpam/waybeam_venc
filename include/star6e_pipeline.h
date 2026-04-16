@@ -22,6 +22,7 @@ struct DebugOsdState; /* forward declaration — see debug_osd.h */
 typedef struct {
 	SensorSelectResult sensor;
 	MI_VENC_CHN venc_channel;
+	int venc_fd;                /* pollable fd from MI_VENC_GetFd, -1 if unavailable */
 	MI_SYS_ChnPort_t vif_port;
 	MI_SYS_ChnPort_t vpe_port;
 	MI_SYS_ChnPort_t venc_port;
