@@ -983,7 +983,7 @@ static int bind_and_finalize_pipeline(Star6ePipelineState *state,
 		return ret;
 	}
 	state->bound_vpe_venc = 1;
-	MI_SYS_SetChnOutputPortDepth(&state->venc_port, 1, 3);
+	MI_SYS_SetChnOutputPortDepth(&state->venc_port, 2, 6);
 
 	state->venc_fd = MI_VENC_GetFd(state->venc_channel);
 	if (state->venc_fd < 0)
