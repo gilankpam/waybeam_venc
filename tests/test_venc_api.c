@@ -40,6 +40,7 @@ typedef struct {
 	int apply_fps_calls;
 	int apply_gop_calls;
 	int apply_qp_delta_calls;
+	int apply_avg_lvl_calls;
 	int apply_verbose_calls;
 	int apply_awb_mode_calls;
 
@@ -47,6 +48,7 @@ typedef struct {
 	uint32_t last_fps;
 	uint32_t last_gop;
 	int last_qp_delta;
+	uint32_t last_avg_lvl;
 	bool last_verbose;
 	int last_awb_mode;
 	uint32_t last_awb_ct;
@@ -55,6 +57,7 @@ typedef struct {
 	int fail_verbose;
 	int fail_fps;
 	int fail_gop;
+	int fail_avg_lvl;
 } ApiCallbackState;
 
 static ApiCallbackState g_api_cb_state;
@@ -257,6 +260,13 @@ static int test_apply_qp_delta(int delta)
 	g_api_cb_state.apply_qp_delta_calls++;
 	g_api_cb_state.last_qp_delta = delta;
 	return 0;
+}
+
+static int test_apply_avg_lvl(uint32_t level)
+{
+	g_api_cb_state.apply_avg_lvl_calls++;
+	g_api_cb_state.last_avg_lvl = level;
+	return g_api_cb_state.fail_avg_lvl ? -1 : 0;
 }
 
 static int test_apply_verbose(bool on)
@@ -684,6 +694,128 @@ static int test_restart_set_accepts_star6e_h264_compact(void)
 	return failures;
 }
 
+static int test_avg_lvl_set_success(void)
+{
+	int failures = 0;
+	VencConfig cfg;
+	VencApplyCallbacks cb;
+	int status = 0;
+	char response[1024];
+
+	venc_config_defaults(&cfg);
+	reset_api_cb_state();
+	memset(&cb, 0, sizeof(cb));
+	cb.apply_avg_lvl = test_apply_avg_lvl;
+
+	CHECK("avg_lvl default is 1", cfg.video0.avg_lvl == 1);
+
+	CHECK("avg_lvl set 2 rc",
+		apply_set_query_http(&cfg, "star6e", &cb,
+			"video0.avg_lvl=2", &status, response,
+			sizeof(response)) == 0);
+	CHECK("avg_lvl set 2 status 200", status == 200);
+	CHECK("avg_lvl set 2 cfg", cfg.video0.avg_lvl == 2);
+	CHECK("avg_lvl set 2 applied once",
+		g_api_cb_state.apply_avg_lvl_calls == 1);
+	CHECK("avg_lvl set 2 value", g_api_cb_state.last_avg_lvl == 2);
+
+	CHECK("avg_lvl set 3 rc",
+		apply_set_query_http(&cfg, "star6e", &cb,
+			"video0.avg_lvl=3", &status, response,
+			sizeof(response)) == 0);
+	CHECK("avg_lvl set 3 status 200", status == 200);
+	CHECK("avg_lvl set 3 cfg", cfg.video0.avg_lvl == 3);
+	CHECK("avg_lvl set 3 applied", g_api_cb_state.apply_avg_lvl_calls == 2);
+	CHECK("avg_lvl set 3 value", g_api_cb_state.last_avg_lvl == 3);
+
+	CHECK("avg_lvl set 1 rc",
+		apply_set_query_http(&cfg, "star6e", &cb,
+			"video0.avgLvl=1", &status, response,
+			sizeof(response)) == 0);
+	CHECK("avg_lvl camel alias status", status == 200);
+	CHECK("avg_lvl set 1 cfg", cfg.video0.avg_lvl == 1);
+	CHECK("avg_lvl set 1 value", g_api_cb_state.last_avg_lvl == 1);
+
+	return failures;
+}
+
+static int test_avg_lvl_rejects_out_of_range(void)
+{
+	int failures = 0;
+	VencConfig cfg;
+	VencApplyCallbacks cb;
+	int status = 0;
+	char response[1024];
+
+	venc_config_defaults(&cfg);
+	reset_api_cb_state();
+	memset(&cb, 0, sizeof(cb));
+	cb.apply_avg_lvl = test_apply_avg_lvl;
+
+	CHECK("avg_lvl reject 0 rc",
+		apply_set_query_http(&cfg, "star6e", &cb,
+			"video0.avg_lvl=0", &status, response,
+			sizeof(response)) == 0);
+	CHECK("avg_lvl reject 0 status", status == 409);
+	CHECK("avg_lvl reject 0 error",
+		strstr(response, "avg_lvl must be in range [1, 3]") != NULL);
+	CHECK("avg_lvl reject 0 unchanged", cfg.video0.avg_lvl == 1);
+	CHECK("avg_lvl reject 0 no apply",
+		g_api_cb_state.apply_avg_lvl_calls == 0);
+
+	CHECK("avg_lvl reject 4 rc",
+		apply_set_query_http(&cfg, "star6e", &cb,
+			"video0.avg_lvl=4", &status, response,
+			sizeof(response)) == 0);
+	CHECK("avg_lvl reject 4 status", status == 409);
+	CHECK("avg_lvl reject 4 error",
+		strstr(response, "avg_lvl must be in range [1, 3]") != NULL);
+	CHECK("avg_lvl reject 4 unchanged", cfg.video0.avg_lvl == 1);
+	CHECK("avg_lvl reject 4 no apply",
+		g_api_cb_state.apply_avg_lvl_calls == 0);
+
+	CHECK("avg_lvl set 2 after rejects rc",
+		apply_set_query_http(&cfg, "star6e", &cb,
+			"video0.avg_lvl=2", &status, response,
+			sizeof(response)) == 0);
+	CHECK("avg_lvl set 2 after rejects status", status == 200);
+	CHECK("avg_lvl set 2 after rejects cfg", cfg.video0.avg_lvl == 2);
+	CHECK("avg_lvl set 2 after rejects value",
+		g_api_cb_state.last_avg_lvl == 2);
+
+	return failures;
+}
+
+static int test_avg_lvl_rolls_back_on_apply_failure(void)
+{
+	int failures = 0;
+	VencConfig cfg;
+	VencApplyCallbacks cb;
+	int status = 0;
+	char response[1024];
+
+	venc_config_defaults(&cfg);
+	reset_api_cb_state();
+	memset(&cb, 0, sizeof(cb));
+	cb.apply_avg_lvl = test_apply_avg_lvl;
+	g_api_cb_state.fail_avg_lvl = 1;
+
+	CHECK("avg_lvl rollback rc",
+		apply_set_query_http(&cfg, "star6e", &cb,
+			"video0.avg_lvl=2", &status, response,
+			sizeof(response)) == 0);
+	CHECK("avg_lvl rollback status", status == 500);
+	CHECK("avg_lvl rollback error",
+		strstr(response, "failed to apply live field group") != NULL);
+	CHECK("avg_lvl rollback cfg restored", cfg.video0.avg_lvl == 1);
+	CHECK("avg_lvl rollback forward+rollback",
+		g_api_cb_state.apply_avg_lvl_calls == 2);
+	CHECK("avg_lvl rollback restored value",
+		g_api_cb_state.last_avg_lvl == 1);
+
+	return failures;
+}
+
 /* ── Entry point ─────────────────────────────────────────────────────── */
 
 int test_venc_api(void)
@@ -701,6 +833,9 @@ int test_venc_api(void)
 	failures += test_multi_set_rolls_back_on_apply_failure();
 	failures += test_single_set_runtime_apply_failure();
 	failures += test_live_set_rejects_out_of_range_roi_values();
+	failures += test_avg_lvl_set_success();
+	failures += test_avg_lvl_rejects_out_of_range();
+	failures += test_avg_lvl_rolls_back_on_apply_failure();
 	failures += test_restart_set_accepts_maruko_h264_config();
 	failures += test_restart_set_rejects_star6e_h264_rtp();
 	failures += test_restart_set_accepts_star6e_h264_compact();

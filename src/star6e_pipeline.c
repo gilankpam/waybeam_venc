@@ -524,7 +524,7 @@ static void star6e_pipeline_fill_h26x_attr(i6_venc_attr_h26x *attr,
 
 static int star6e_pipeline_start_venc(uint32_t width, uint32_t height,
 	uint32_t bitrate, uint32_t framerate, uint32_t gop, PAYLOAD_TYPE_E codec,
-	int rc_mode, bool frame_lost_enabled, MI_VENC_CHN *chn)
+	int rc_mode, uint32_t avg_lvl, bool frame_lost_enabled, MI_VENC_CHN *chn)
 {
 	MI_VENC_ChnAttr_t attr = {0};
 	MI_U32 bit_rate_bits;
@@ -533,6 +533,8 @@ static int star6e_pipeline_start_venc(uint32_t width, uint32_t height,
 	if (bitrate > 200000)
 		bitrate = 200000;
 	bit_rate_bits = bitrate * 1024;
+	if (avg_lvl < 1 || avg_lvl > 3)
+		avg_lvl = 1;
 
 	if (codec == PT_H265) {
 		attr.attrib.codec = I6_VENC_CODEC_H265;
@@ -578,7 +580,7 @@ static int star6e_pipeline_start_venc(uint32_t width, uint32_t height,
 			attr.rate.h265Cbr = (i6_venc_rate_h26xcbr){
 				.gop = gop, .statTime = 1,
 				.fpsNum = framerate, .fpsDen = 1,
-				.bitrate = bit_rate_bits, .avgLvl = 1,
+				.bitrate = bit_rate_bits, .avgLvl = avg_lvl,
 			};
 			break;
 		}
@@ -620,7 +622,7 @@ static int star6e_pipeline_start_venc(uint32_t width, uint32_t height,
 			attr.rate.h264Cbr = (i6_venc_rate_h26xcbr){
 				.gop = gop, .statTime = 1,
 				.fpsNum = framerate, .fpsDen = 1,
-				.bitrate = bit_rate_bits, .avgLvl = 1,
+				.bitrate = bit_rate_bits, .avgLvl = avg_lvl,
 			};
 			break;
 		}
@@ -1511,7 +1513,7 @@ int star6e_pipeline_reinit(Star6ePipelineState *state, const VencConfig *vcfg,
 		venc_fps = pconf.sensor_framerate;
 	ret = star6e_pipeline_start_venc(pconf.image_width, pconf.image_height,
 		pconf.venc_max_rate, venc_fps, pconf.venc_gop_size,
-		pconf.rc_codec, pconf.rc_mode,
+		pconf.rc_codec, pconf.rc_mode, vcfg->video0.avg_lvl,
 		vcfg->video0.frame_lost, &state->venc_channel);
 	if (ret != 0)
 		return ret;
@@ -1568,7 +1570,7 @@ int star6e_pipeline_start(Star6ePipelineState *state, const VencConfig *vcfg,
 		venc_fps = pconf.sensor_framerate;
 	ret = star6e_pipeline_start_venc(pconf.image_width, pconf.image_height,
 		pconf.venc_max_rate, venc_fps, pconf.venc_gop_size,
-		pconf.rc_codec, pconf.rc_mode,
+		pconf.rc_codec, pconf.rc_mode, vcfg->video0.avg_lvl,
 		vcfg->video0.frame_lost, &state->venc_channel);
 	if (ret != 0)
 		goto fail_vpe;
@@ -1626,7 +1628,8 @@ int star6e_pipeline_start_dual(Star6ePipelineState *state,
 
 	ret = star6e_pipeline_start_venc(state->image_width,
 		state->image_height, bitrate, fps, gop,
-		PT_H265, 3 /* CBR */, frame_lost, &d->channel);
+		PT_H265, 3 /* CBR */, 1 /* avgLvl */,
+		frame_lost, &d->channel);
 	if (ret != 0) {
 		fprintf(stderr, "WARNING: dual VENC ch1 create failed (%d), "
 			"falling back to mirror mode\n", ret);

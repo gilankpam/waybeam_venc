@@ -108,6 +108,7 @@ void venc_config_defaults(VencConfig *cfg)
 	cfg->video0.gop_size = 1.0;
 	cfg->video0.qp_delta = -4;
 	cfg->video0.frame_lost = true;
+	cfg->video0.avg_lvl = 1;
 
 	/* outgoing */
 	cfg->outgoing.enabled = false;

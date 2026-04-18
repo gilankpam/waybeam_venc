@@ -14,6 +14,7 @@ typedef struct {
 	int (*apply_bitrate)(uint32_t kbps);
 	int (*apply_fps)(uint32_t fps);
 	int (*apply_gop)(uint32_t gop_size);
+	int (*apply_avg_lvl)(uint32_t level);
 	int (*apply_qp_delta)(int delta);
 	int (*apply_roi_qp)(int qp);
 	int (*apply_exposure)(uint32_t us);
