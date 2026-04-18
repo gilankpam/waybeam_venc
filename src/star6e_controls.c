@@ -287,34 +287,6 @@ static int apply_gop(uint32_t gop_size)
 	return apply_encoder_gop(gop_size);
 }
 
-static int apply_avg_lvl(uint32_t level)
-{
-	MI_VENC_ChnAttr_t attr = {0};
-
-	if (level < 1 || level > 3)
-		return -1;
-
-	if (MI_VENC_GetChnAttr(g_star6e_control_ctx.venc_chn, &attr) != 0)
-		return -1;
-
-	/* avgLvl is a CBR-only field.  For VBR/AVBR/QVBR there is no equivalent
-	 * knob; return success so live-set of the config field still commits
-	 * and takes effect on the next CBR-mode channel restart. */
-	switch (attr.rate.mode) {
-	case I6_VENC_RATEMODE_H265CBR:
-		attr.rate.h265Cbr.avgLvl = level;
-		break;
-	case I6_VENC_RATEMODE_H264CBR:
-		attr.rate.h264Cbr.avgLvl = level;
-		break;
-	default:
-		return 0;
-	}
-
-	return MI_VENC_SetChnAttr(g_star6e_control_ctx.venc_chn, &attr) == 0 ?
-		0 : -1;
-}
-
 static int apply_qp_delta(int delta)
 {
 	MI_VENC_ChnAttr_t attr = {0};
@@ -1037,7 +1009,6 @@ static const VencApplyCallbacks g_star6e_apply_callbacks = {
 	.apply_bitrate = apply_bitrate,
 	.apply_fps = apply_fps,
 	.apply_gop = apply_gop,
-	.apply_avg_lvl = apply_avg_lvl,
 	.apply_qp_delta = apply_qp_delta,
 	.apply_roi_qp = apply_roi_qp,
 	.apply_exposure = apply_exposure,

@@ -166,7 +166,6 @@ static const FieldDesc g_fields[] = {
 	FIELD(video0, bitrate,         FT_UINT,   MUT_LIVE),
 	FIELD(video0, gop_size,        FT_DOUBLE, MUT_LIVE),
 	FIELD(video0, qp_delta,        FT_INT,    MUT_LIVE),
-	FIELD(video0, avg_lvl,         FT_UINT,   MUT_LIVE),
 	FIELD(video0, frame_lost,      FT_BOOL,   MUT_RESTART),
 	FIELD(outgoing, enabled,           FT_BOOL,   MUT_LIVE),
 	FIELD(outgoing, server,            FT_STRING, MUT_LIVE),
@@ -259,7 +258,6 @@ static const FieldAlias g_field_aliases[] = {
 	{ "video0.rcMode", "video0.rc_mode" },
 	{ "video0.gopSize", "video0.gop_size" },
 	{ "video0.qpDelta", "video0.qp_delta" },
-	{ "video0.avgLvl", "video0.avg_lvl" },
 	{ "video0.frameLost", "video0.frame_lost" },
 	{ "outgoing.maxPayloadSize", "outgoing.max_payload_size" },
 	{ "outgoing.audioPort", "outgoing.audio_port" },
@@ -495,10 +493,6 @@ static const char *validate_field_cfg(const VencConfig *cfg, const char *key)
 		if (cfg->video0.bitrate == 0 || cfg->video0.bitrate > 200000)
 			return "bitrate must be 1-200000 kbps";
 	}
-	if (strcmp(key, "video0.avg_lvl") == 0) {
-		if (cfg->video0.avg_lvl < 1 || cfg->video0.avg_lvl > 3)
-			return "avg_lvl must be in range [1, 3]";
-	}
 	if (strcmp(key, "video0.scene_holdoff") == 0 &&
 	    cfg->video0.scene_holdoff == 0)
 		return "video0.scene_holdoff must be >= 1";
@@ -576,7 +570,6 @@ typedef enum {
 	LIVE_GROUP_BITRATE = 0,
 	LIVE_GROUP_VIDEO_TIMING,
 	LIVE_GROUP_QP_DELTA,
-	LIVE_GROUP_AVG_LVL,
 	LIVE_GROUP_ROI,
 	LIVE_GROUP_EXPOSURE,
 	LIVE_GROUP_GAIN_MAX,
@@ -724,8 +717,6 @@ static LiveApplyGroup live_group_for_key(const char *canonical_key)
 		return LIVE_GROUP_VIDEO_TIMING;
 	if (strcmp(canonical_key, "video0.qp_delta") == 0)
 		return LIVE_GROUP_QP_DELTA;
-	if (strcmp(canonical_key, "video0.avg_lvl") == 0)
-		return LIVE_GROUP_AVG_LVL;
 	if (strcmp(canonical_key, "fpv.roi_enabled") == 0 ||
 	    strcmp(canonical_key, "fpv.roi_qp") == 0 ||
 	    strcmp(canonical_key, "fpv.roi_steps") == 0 ||
@@ -758,8 +749,6 @@ static const char *live_group_name(LiveApplyGroup group)
 		return "video0.fps/video0.gop_size";
 	case LIVE_GROUP_QP_DELTA:
 		return "video0.qp_delta";
-	case LIVE_GROUP_AVG_LVL:
-		return "video0.avg_lvl";
 	case LIVE_GROUP_ROI:
 		return "fpv.roi_*";
 	case LIVE_GROUP_EXPOSURE:
@@ -894,8 +883,6 @@ static int live_group_supported_for_cfg(const VencConfig *cfg,
 		return 1;
 	case LIVE_GROUP_QP_DELTA:
 		return g_cb->apply_qp_delta != NULL;
-	case LIVE_GROUP_AVG_LVL:
-		return g_cb->apply_avg_lvl != NULL;
 	case LIVE_GROUP_ROI:
 		return g_cb->apply_roi_qp != NULL;
 	case LIVE_GROUP_EXPOSURE:
@@ -938,9 +925,6 @@ static void copy_live_group_fields(VencConfig *dst, const VencConfig *src,
 		break;
 	case LIVE_GROUP_QP_DELTA:
 		dst->video0.qp_delta = src->video0.qp_delta;
-		break;
-	case LIVE_GROUP_AVG_LVL:
-		dst->video0.avg_lvl = src->video0.avg_lvl;
 		break;
 	case LIVE_GROUP_ROI:
 		dst->fpv.roi_enabled = src->fpv.roi_enabled;
@@ -1033,8 +1017,6 @@ static int apply_live_group_for_cfg(const VencConfig *cfg,
 		return 0;
 	case LIVE_GROUP_QP_DELTA:
 		return g_cb->apply_qp_delta(cfg->video0.qp_delta);
-	case LIVE_GROUP_AVG_LVL:
-		return g_cb->apply_avg_lvl(cfg->video0.avg_lvl);
 	case LIVE_GROUP_ROI:
 		return g_cb->apply_roi_qp(cfg->fpv.roi_qp);
 	case LIVE_GROUP_EXPOSURE:
