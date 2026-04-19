@@ -31,7 +31,7 @@ index 0dec131..44ed992 100644
  
      struct pollfd fds[nfds + 1];
      memset(fds, '\0', sizeof(fds));
-@@ -769,6 +778,43 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -769,6 +778,44 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
      uint32_t count_p_truncated = 0; // injected large packets that were truncated
      int start_fd_idx = 0;
  
@@ -42,9 +42,10 @@ index 0dec131..44ed992 100644
 +    int shm_poll_timeout_ms = 1;
 +    int shm_reattach_backoff_ms = 100;
 +    uint64_t shm_next_reattach_ts = 0;
-+    int normal_fec_k = k;
-+    int normal_fec_n = n;
++    int normal_fec_k = 0;
++    int normal_fec_n = 0;
 +    bool idr_fec_active = false;
++    t->get_fec(normal_fec_k, normal_fec_n);
 +
 +    if (use_shm)
 +    {
@@ -75,7 +76,7 @@ index 0dec131..44ed992 100644
      for(;;)
      {
          uint64_t cur_ts = get_time_ms();
-@@ -779,7 +825,16 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -779,7 +826,16 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
              poll_timeout = std::min(poll_timeout, (int)(fec_close_ts > cur_ts ? fec_close_ts - cur_ts : 0));
          }
  
@@ -93,7 +94,7 @@ index 0dec131..44ed992 100644
  
          if (rc < 0)
          {
-@@ -876,5 +931,9 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -876,5 +932,9 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
                      t->init_session(fec_k, fec_n);
 
 +                    // Update IDR FEC boost baseline after dynamic FEC change
@@ -103,7 +104,7 @@ index 0dec131..44ed992 100644
                      // Emulate FEC for initial session key distribution
                      for(int i = 0; i < fec_n - fec_k + 1; i++)
                      {
-@@ -980,7 +1039,7 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -980,7 +1040,7 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
              }
          }
  
@@ -112,7 +113,7 @@ index 0dec131..44ed992 100644
          {
              // close fec only if no data packets and fec timeout expired
              if (fec_timeout > 0 && cur_ts >= fec_close_ts)
-@@ -994,6 +1053,188 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -994,6 +1054,188 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
              continue;
          }
  
@@ -301,7 +302,7 @@ index 0dec131..44ed992 100644
          // rc > 0: events detected
          // start from last fd index and reset it to zero
          int _tmp = start_fd_idx;
-@@ -1526,6 +1767,52 @@ void local_loop_unix(int argc, char* const* argv, int optind, int rcv_buf, int l
+@@ -1526,6 +1768,52 @@ void local_loop_unix(int argc, char* const* argv, int optind, int rcv_buf, int l
  }
  
  
@@ -354,7 +355,7 @@ index 0dec131..44ed992 100644
  void distributor_loop(int argc, char* const* argv, int optind, int rcv_buf, int log_interval,
                        int udp_port, int k, int n, const string &keypair, int fec_timeout,
                        uint64_t epoch, uint32_t channel_id, uint32_t fec_delay, bool use_qdisc, uint32_t fwmark,
-@@ -1669,6 +1956,7 @@ int main(int argc, char * const *argv)
+@@ -1669,6 +1957,7 @@ int main(int argc, char * const *argv)
      int opt;
      uint8_t k=8, n=12, radio_port=0;
      uint32_t fec_delay = 0;
@@ -362,7 +363,7 @@ index 0dec131..44ed992 100644
      uint32_t link_id = 0x0;
      uint64_t epoch = 0;
      int srv_port = 10000;
-@@ -1697,7 +1985,7 @@ int main(int argc, char * const *argv)
+@@ -1697,7 +1986,7 @@ int main(int argc, char * const *argv)
      uint32_t inject_retries = 0;
      uint32_t inject_retry_delay = 5000; // 5ms
  
@@ -371,7 +372,7 @@ index 0dec131..44ed992 100644
          switch (opt) {
          case 'I':
              tx_mode = INJECTOR;
-@@ -1814,9 +2102,13 @@ int main(int argc, char * const *argv)
+@@ -1814,9 +2103,13 @@ int main(int argc, char * const *argv)
              inject_retry_delay = atoi(optarg);
              break;
  
@@ -386,7 +387,7 @@ index 0dec131..44ed992 100644
                       "             [-F fec_delay] [-B bandwidth] [-G guard_interval] [-S stbc] [-L ldpc] [-M mcs_index] [-N VHT_NSS]\n"
                       "             [-T fec_timeout] [-l log_interval] [-e epoch] [-i link_id] [-f { data | rts }] [-m] [-V] [-Q]\n"
                       "             [-P fwmark] [-J inject_retries] [-E inject_retry_delay] [-C control_port] interface1 [interface2] ...\n",
-@@ -1882,6 +2174,14 @@ int main(int argc, char * const *argv)
+@@ -1882,6 +2175,14 @@ int main(int argc, char * const *argv)
                                  radiotap_header, frame_type, control_port, mirror,
                                  snd_buf, inject_retries, inject_retry_delay);
              }
