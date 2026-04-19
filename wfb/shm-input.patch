@@ -1,5 +1,5 @@
 diff --git a/src/tx.cpp b/src/tx.cpp
-index 0dec131..939faf1 100644
+index 0dec131..44ed992 100644
 --- a/src/tx.cpp
 +++ b/src/tx.cpp
 @@ -42,6 +42,12 @@
@@ -99,7 +99,7 @@ index 0dec131..939faf1 100644
          {
              // close fec only if no data packets and fec timeout expired
              if (fec_timeout > 0 && cur_ts >= fec_close_ts)
-@@ -994,6 +1046,148 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -994,6 +1046,165 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
              continue;
          }
  
@@ -177,12 +177,14 @@ index 0dec131..939faf1 100644
 +
 +            uint8_t buf[MAX_PAYLOAD_SIZE + 1];
 +            uint16_t out_len;
++            uint8_t slot_flags;
 +            bool got_shm_packet = false;
++            bool got_eof_flush = false;
 +
 +            // Drain all available packets from ring
 +            for(;;)
 +            {
-+                int ret = venc_ring_read(g_shm_ring, buf, sizeof(buf), &out_len);
++                int ret = venc_ring_read(g_shm_ring, buf, sizeof(buf), &out_len, &slot_flags);
 +                if (ret != 0)
 +                    break;
 +
@@ -209,6 +211,15 @@ index 0dec131..939faf1 100644
 +
 +                t->send_packet(buf, rsize, 0);
 +
++                // Frame-aware FEC flush: end-of-frame closes the current
++                // FEC block immediately so parity emits without waiting
++                // for the next frame's packets to fill the block.
++                if (slot_flags & RING_SLOT_FLAG_EOF)
++                {
++                    while(t->send_packet(NULL, 0, WFB_PACKET_FEC_ONLY));
++                    got_eof_flush = true;
++                }
++
 +                if (cur_ts >= log_send_ts)
 +                {
 +                    break; // go to outer loop for logging
@@ -228,7 +239,13 @@ index 0dec131..939faf1 100644
 +
 +            if (fec_timeout > 0)
 +            {
-+                if (got_shm_packet)
++                if (got_eof_flush)
++                {
++                    // EoF already flushed the block; delay the timer so
++                    // the next empty-block flush doesn't fire immediately.
++                    fec_close_ts = get_time_ms() + fec_timeout;
++                }
++                else if (got_shm_packet)
 +                {
 +                    fec_close_ts = get_time_ms() + fec_timeout;
 +                }
@@ -248,7 +265,7 @@ index 0dec131..939faf1 100644
          // rc > 0: events detected
          // start from last fd index and reset it to zero
          int _tmp = start_fd_idx;
-@@ -1526,6 +1720,52 @@ void local_loop_unix(int argc, char* const* argv, int optind, int rcv_buf, int l
+@@ -1526,6 +1737,52 @@ void local_loop_unix(int argc, char* const* argv, int optind, int rcv_buf, int l
  }
  
  
@@ -301,7 +318,7 @@ index 0dec131..939faf1 100644
  void distributor_loop(int argc, char* const* argv, int optind, int rcv_buf, int log_interval,
                        int udp_port, int k, int n, const string &keypair, int fec_timeout,
                        uint64_t epoch, uint32_t channel_id, uint32_t fec_delay, bool use_qdisc, uint32_t fwmark,
-@@ -1669,6 +1909,7 @@ int main(int argc, char * const *argv)
+@@ -1669,6 +1926,7 @@ int main(int argc, char * const *argv)
      int opt;
      uint8_t k=8, n=12, radio_port=0;
      uint32_t fec_delay = 0;
@@ -309,7 +326,7 @@ index 0dec131..939faf1 100644
      uint32_t link_id = 0x0;
      uint64_t epoch = 0;
      int srv_port = 10000;
-@@ -1697,7 +1938,7 @@ int main(int argc, char * const *argv)
+@@ -1697,7 +1955,7 @@ int main(int argc, char * const *argv)
      uint32_t inject_retries = 0;
      uint32_t inject_retry_delay = 5000; // 5ms
  
@@ -318,7 +335,7 @@ index 0dec131..939faf1 100644
          switch (opt) {
          case 'I':
              tx_mode = INJECTOR;
-@@ -1814,9 +2055,13 @@ int main(int argc, char * const *argv)
+@@ -1814,9 +2072,13 @@ int main(int argc, char * const *argv)
              inject_retry_delay = atoi(optarg);
              break;
  
@@ -333,7 +350,7 @@ index 0dec131..939faf1 100644
                       "             [-F fec_delay] [-B bandwidth] [-G guard_interval] [-S stbc] [-L ldpc] [-M mcs_index] [-N VHT_NSS]\n"
                       "             [-T fec_timeout] [-l log_interval] [-e epoch] [-i link_id] [-f { data | rts }] [-m] [-V] [-Q]\n"
                       "             [-P fwmark] [-J inject_retries] [-E inject_retry_delay] [-C control_port] interface1 [interface2] ...\n",
-@@ -1882,6 +2127,14 @@ int main(int argc, char * const *argv)
+@@ -1882,6 +2144,14 @@ int main(int argc, char * const *argv)
                                  radiotap_header, frame_type, control_port, mirror,
                                  snd_buf, inject_retries, inject_retry_delay);
              }

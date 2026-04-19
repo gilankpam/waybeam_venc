@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,10 +10,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* Slot stride: length prefix (2) + data, aligned to 8 bytes */
+/* Slot stride: slot header (length + flags + reserved) + data, aligned to 8 bytes */
 static uint32_t calc_slot_stride(uint32_t slot_data_size)
 {
-	uint32_t raw = (uint32_t)sizeof(uint16_t) + slot_data_size;
+	uint32_t raw = (uint32_t)offsetof(venc_ring_slot_t, data) + slot_data_size;
 	return (raw + 7u) & ~7u;
 }
 

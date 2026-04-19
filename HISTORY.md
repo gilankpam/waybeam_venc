@@ -1,5 +1,22 @@
 # History
 
+## [Unreleased]
+
+- **Frame-aware FEC block flush (SHM ring V3):** Per-slot flags byte lets
+  venc signal end-of-frame to wfb_tx via the SHM ring. The patched wfb_tx
+  closes the current FEC block immediately on EoF, so parity emits at
+  frame boundaries instead of waiting for the next frame's packets to
+  fill the block. Eliminates steady-state P-frame parity delay (~8-15 ms
+  at 60 FPS with k=8) and IDR-tail straddling into the following frame.
+  Ring protocol bumped V2 → V3; producer and consumer must deploy
+  together (old wfb_tx rejects V3 ring cleanly).
+  - New: `RING_SLOT_FLAG_EOF` in `include/venc_ring.h`; extended
+    `venc_ring_write()`/`venc_ring_read()` signatures with flags.
+  - Patched `wfb/shm-input.patch`: flush on EoF via
+    `send_packet(NULL, 0, WFB_PACKET_FEC_ONLY)`.
+  - Existing `fec_timeout` timer retained as safety net for dropped
+    final-packet case.
+
 ## [0.7.0] - 2026-04-11
 
 - **dlopen migration (both backends):** Both Star6E and Maruko now load all

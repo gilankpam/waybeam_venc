@@ -77,11 +77,13 @@ int star6e_output_is_rtp(const Star6eOutput *output);
 int star6e_output_is_shm(const Star6eOutput *output);
 
 /** Send RTP header and payload parts as a single UDP datagram.
- *  payload2 may be NULL/0 for single-part payloads. */
+ *  payload2 may be NULL/0 for single-part payloads.
+ *  flags: RING_SLOT_FLAG_* bits for SHM path (ignored on socket path). */
 int star6e_output_send_rtp_parts(Star6eOutput *output,
 	const uint8_t *header, size_t header_len,
 	const uint8_t *payload1, size_t payload1_len,
-	const uint8_t *payload2, size_t payload2_len);
+	const uint8_t *payload2, size_t payload2_len,
+	uint8_t flags);
 
 /** Return and reset accumulated send error count. */
 uint32_t star6e_output_drain_send_errors(Star6eOutput *output);

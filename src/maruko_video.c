@@ -30,6 +30,10 @@ static int maruko_rtp_write(const uint8_t *header, size_t header_len,
 	/* SHM path: write RTP packet to ring buffer (flatten payload parts) */
 	if (ctx->ring) {
 		size_t total_payload = payload1_len + payload2_len;
+		uint8_t flags = 0;
+		/* RTP marker bit (header byte 1, bit 7) = last packet of frame. */
+		if (header_len >= 2 && (header[1] & 0x80))
+			flags |= RING_SLOT_FLAG_EOF;
 		if (header_len > UINT16_MAX || total_payload > UINT16_MAX)
 			return -1;
 		if (payload2 && payload2_len > 0) {
@@ -40,10 +44,10 @@ static int maruko_rtp_write(const uint8_t *header, size_t header_len,
 			memcpy(flat + payload1_len, payload2, payload2_len);
 			return venc_ring_write(ctx->ring, header,
 				(uint16_t)header_len, flat,
-				(uint16_t)total_payload);
+				(uint16_t)total_payload, flags);
 		}
 		return venc_ring_write(ctx->ring, header, (uint16_t)header_len,
-			payload1, (uint16_t)payload1_len);
+			payload1, (uint16_t)payload1_len, flags);
 	}
 
 	/* Socket path */

@@ -206,7 +206,7 @@ static int test_star6e_output_udp_send_rtp(void)
 	ret = star6e_output_init(&output, &setup);
 	CHECK("star6e output udp rtp init", ret == 0);
 	ret = star6e_output_send_rtp_parts(&output, header, sizeof(header), payload,
-		sizeof(payload), NULL, 0);
+		sizeof(payload), NULL, 0, 0);
 	CHECK("star6e output udp rtp send", ret == 0);
 	received = recv(recv_socket, buf, sizeof(buf), 0);
 	CHECK("star6e output udp rtp recv size",
@@ -233,6 +233,7 @@ static int test_star6e_output_shm_send_rtp(void)
 	uint8_t payload[5] = { 5, 4, 3, 2, 1 };
 	uint8_t slot_data[32];
 	uint16_t slot_len = 0;
+	uint8_t slot_flags = 0xFF;
 	int failures = 0;
 	int ret;
 
@@ -243,12 +244,16 @@ static int test_star6e_output_shm_send_rtp(void)
 	ret = star6e_output_init(&output, &setup);
 	CHECK("star6e output shm send init", ret == 0);
 	ret = star6e_output_send_rtp_parts(&output, header, sizeof(header), payload,
-		sizeof(payload), NULL, 0);
+		sizeof(payload), NULL, 0, 0);
 	CHECK("star6e output shm send", ret == 0);
+	/* Second send with EoF flag — must propagate to the ring slot. */
+	ret = star6e_output_send_rtp_parts(&output, header, sizeof(header),
+		payload, sizeof(payload), NULL, 0, RING_SLOT_FLAG_EOF);
+	CHECK("star6e output shm send eof", ret == 0);
 	attached = venc_ring_attach(name);
 	CHECK("star6e output shm attach", attached != NULL);
 	ret = attached ? venc_ring_read(attached, slot_data, sizeof(slot_data),
-		&slot_len) : -1;
+		&slot_len, &slot_flags) : -1;
 	CHECK("star6e output shm read", ret == 0);
 	CHECK("star6e output shm read slot len",
 		slot_len == (uint16_t)(sizeof(header) + sizeof(payload)));
@@ -256,6 +261,13 @@ static int test_star6e_output_shm_send_rtp(void)
 		memcmp(slot_data, header, sizeof(header)) == 0);
 	CHECK("star6e output shm read payload",
 		memcmp(slot_data + sizeof(header), payload, sizeof(payload)) == 0);
+	CHECK("star6e output shm first slot no eof", slot_flags == 0);
+	slot_flags = 0xFF;
+	ret = attached ? venc_ring_read(attached, slot_data, sizeof(slot_data),
+		&slot_len, &slot_flags) : -1;
+	CHECK("star6e output shm read eof", ret == 0);
+	CHECK("star6e output shm eof flag propagated",
+		slot_flags == RING_SLOT_FLAG_EOF);
 	if (attached)
 		venc_ring_destroy(attached);
 	star6e_output_teardown(&output);
@@ -351,7 +363,7 @@ static int test_star6e_output_unix_send_rtp(void)
 	CHECK("star6e unix rtp transport", output.transport == VENC_OUTPUT_URI_UNIX);
 	CHECK("star6e unix rtp connected udp ignored", output.connected_udp == 0);
 	ret = star6e_output_send_rtp_parts(&output, header, sizeof(header), payload,
-		sizeof(payload), NULL, 0);
+		sizeof(payload), NULL, 0, 0);
 	CHECK("star6e unix rtp send", ret == 0);
 	received = recv(recv_socket, buf, sizeof(buf), 0);
 	CHECK("star6e unix rtp recv size",
@@ -986,7 +998,7 @@ static int test_star6e_audio_output_shared_teardown_keeps_video_socket(void)
 
 	star6e_audio_output_teardown(&audio_output);
 	ret = star6e_output_send_rtp_parts(&output, header, sizeof(header), payload,
-		sizeof(payload), NULL, 0);
+		sizeof(payload), NULL, 0, 0);
 	CHECK("star6e audio shared teardown video send", ret == 0);
 	received = recv(recv_socket, buf, sizeof(buf), 0);
 	CHECK("star6e audio shared teardown recv size",

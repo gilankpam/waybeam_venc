@@ -32,8 +32,10 @@ int main(int argc, char **argv)
 
 	uint8_t buf[8192];
 	uint16_t out_len;
+	uint8_t slot_flags;
 	unsigned long total_pkts = 0;
 	unsigned long total_bytes = 0;
+	unsigned long total_eof = 0;
 
 	struct timespec ts_start, ts_now;
 	clock_gettime(CLOCK_MONOTONIC, &ts_start);
@@ -43,20 +45,23 @@ int main(int argc, char **argv)
 	unsigned long interval_bytes = 0;
 
 	while (running) {
-		int ret = venc_ring_read(r, buf, sizeof(buf), &out_len);
+		int ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &slot_flags);
 		if (ret == 0) {
 			total_pkts++;
 			total_bytes += out_len;
 			interval_pkts++;
 			interval_bytes += out_len;
+			if (slot_flags & RING_SLOT_FLAG_EOF) total_eof++;
 		} else {
 			/* Ring empty — use futex wait with 100ms timeout */
-			ret = venc_ring_read_wait(r, buf, sizeof(buf), &out_len, 100);
+			ret = venc_ring_read_wait(r, buf, sizeof(buf), &out_len,
+				&slot_flags, 100);
 			if (ret == 0) {
 				total_pkts++;
 				total_bytes += out_len;
 				interval_pkts++;
 				interval_bytes += out_len;
+				if (slot_flags & RING_SLOT_FLAG_EOF) total_eof++;
 			}
 		}
 
@@ -91,6 +96,8 @@ int main(int argc, char **argv)
 	       (total_bytes * 8.0) / (total_s * 1000000.0));
 	printf("Avg pkt:    %lu bytes\n",
 	       total_pkts > 0 ? total_bytes / total_pkts : 0);
+	printf("EoF flags:  %lu (%.1f%% of packets)\n", total_eof,
+	       total_pkts > 0 ? (100.0 * total_eof / total_pkts) : 0.0);
 	printf("Ring w_idx: %lu  r_idx: %lu  (lag: %lu)\n",
 	       (unsigned long)r->hdr->write_idx,
 	       (unsigned long)r->hdr->read_idx,
