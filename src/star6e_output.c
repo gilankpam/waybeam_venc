@@ -259,7 +259,7 @@ int star6e_output_send_rtp_parts(Star6eOutput *output,
 	const uint8_t *header, size_t header_len,
 	const uint8_t *payload1, size_t payload1_len,
 	const uint8_t *payload2, size_t payload2_len,
-	uint8_t flags)
+	uint8_t flags, uint8_t fec_k_hint)
 {
 	if (!output || !header || !payload1 || header_len == 0 || payload1_len == 0)
 		return -1;
@@ -276,10 +276,10 @@ int star6e_output_send_rtp_parts(Star6eOutput *output,
 			memcpy(flat + payload1_len, payload2, payload2_len);
 			return venc_ring_write(output->ring, header,
 				(uint16_t)header_len, flat,
-				(uint16_t)total_payload, flags);
+				(uint16_t)total_payload, flags, fec_k_hint);
 		}
 		return venc_ring_write(output->ring, header, (uint16_t)header_len,
-			payload1, (uint16_t)payload1_len, flags);
+			payload1, (uint16_t)payload1_len, flags, fec_k_hint);
 	}
 
 	if (output_socket_send_parts(output->socket_handle, &output->dst,

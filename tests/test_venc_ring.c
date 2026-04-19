@@ -85,11 +85,11 @@ static int test_attach(void)
 
 	/* Write via producer, read via consumer to prove shared memory */
 	uint8_t data[4] = {0xDE, 0xAD, 0xBE, 0xEF};
-	int ret = venc_ring_write(producer, data, 4, NULL, 0, 0);
+	int ret = venc_ring_write(producer, data, 4, NULL, 0, 0, 0);
 	CHECK("att_cross_write", ret == 0);
 	uint8_t buf[32];
 	uint16_t out_len;
-	ret = venc_ring_read(consumer, buf, sizeof(buf), &out_len, NULL);
+	ret = venc_ring_read(consumer, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("att_cross_read", ret == 0);
 	CHECK("att_cross_data", memcmp(buf, data, 4) == 0);
 
@@ -116,20 +116,20 @@ static int test_write_read(void)
 	uint8_t payload[20];
 	memset(payload, 0xAB, sizeof(payload));
 
-	int ret = venc_ring_write(r, hdr, 12, payload, 20, 0);
+	int ret = venc_ring_write(r, hdr, 12, payload, 20, 0, 0);
 	CHECK("wr_write_ok", ret == 0);
 
 	/* Read it back */
 	uint8_t buf[64];
 	uint16_t out_len = 0;
-	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("wr_read_ok", ret == 0);
 	CHECK("wr_read_len", out_len == 32);
 	CHECK("wr_read_hdr", memcmp(buf, hdr, 12) == 0);
 	CHECK("wr_read_payload", buf[12] == 0xAB && buf[31] == 0xAB);
 
 	/* Ring should be empty now */
-	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("wr_empty", ret == -1);
 
 	venc_ring_destroy(r);
@@ -150,42 +150,48 @@ static int test_slot_flags(void)
 
 	/* Write without flags */
 	CHECK("flags_write_plain",
-	      venc_ring_write(r, hdr, 12, payload, 8, 0) == 0);
+	      venc_ring_write(r, hdr, 12, payload, 8, 0, 0) == 0);
 	/* Write with EoF */
 	CHECK("flags_write_eof",
-	      venc_ring_write(r, hdr, 12, payload, 8, RING_SLOT_FLAG_EOF) == 0);
+	      venc_ring_write(r, hdr, 12, payload, 8, RING_SLOT_FLAG_EOF, 0) == 0);
 
 	uint8_t buf[64];
 	uint16_t out_len = 0;
 	uint8_t flags = 0xFF;
 
 	/* First packet: no flags */
-	int ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &flags);
+	int ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &flags, NULL);
 	CHECK("flags_read_plain_ok", ret == 0);
 	CHECK("flags_read_plain_flags", flags == 0);
 
 	/* Second packet: EoF */
 	flags = 0xFF;
-	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &flags);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &flags, NULL);
 	CHECK("flags_read_eof_ok", ret == 0);
 	CHECK("flags_read_eof_flags", flags == RING_SLOT_FLAG_EOF);
 
 	/* Empty ring: out_flags must be zeroed */
 	flags = 0xFF;
-	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &flags);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &flags, NULL);
 	CHECK("flags_read_empty_ret", ret == -1);
 	CHECK("flags_read_empty_flags_zeroed", flags == 0);
 
-	/* Producer must write _reserved = 0. Read it back via raw slot access. */
-	CHECK("flags_write_reserved_check",
-	      venc_ring_write(r, hdr, 12, payload, 8, RING_SLOT_FLAG_EOF) == 0);
+	/* fec_k_hint round-trip: write with hint=7, read back */
+	CHECK("hint_write_ok",
+	      venc_ring_write(r, hdr, 12, payload, 8, RING_SLOT_FLAG_EOF, 7) == 0);
 	uint64_t w = __atomic_load_n(&r->hdr->write_idx, __ATOMIC_ACQUIRE);
 	uint32_t idx = (uint32_t)((w - 1) & (r->hdr->slot_count - 1));
 	venc_ring_slot_t *slot = venc_ring_slot_at(r, idx);
-	CHECK("flags_reserved_is_zero", slot->_reserved == 0);
+	CHECK("hint_slot_byte_set", slot->fec_k_hint == 7);
+	uint8_t read_hint = 0xFF;
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, &read_hint);
+	CHECK("hint_read_ok", ret == 0);
+	CHECK("hint_read_value", read_hint == 7);
 
-	/* NULL out_flags must not crash */
-	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL);
+	/* NULL out_flags and NULL out_fec_k_hint must not crash */
+	CHECK("hint_write_zero",
+	      venc_ring_write(r, hdr, 12, payload, 8, RING_SLOT_FLAG_EOF, 0) == 0);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("flags_read_null_out_flags", ret == 0);
 
 	venc_ring_destroy(r);
@@ -205,11 +211,11 @@ static int test_write_overflow(void)
 	memset(big, 0xFF, sizeof(big));
 
 	/* Total exceeds slot_data_size → should fail */
-	int ret = venc_ring_write(r, big, 20, big, 20, 0);
+	int ret = venc_ring_write(r, big, 20, big, 20, 0, 0);
 	CHECK("of_too_large", ret == -1);
 
 	/* Exactly at limit should succeed */
-	ret = venc_ring_write(r, big, 16, big, 16, 0);
+	ret = venc_ring_write(r, big, 16, big, 16, 0, 0);
 	CHECK("of_exact_fit", ret == 0);
 
 	venc_ring_destroy(r);
@@ -230,26 +236,26 @@ static int test_fill_drain(void)
 	/* Fill all 4 slots */
 	for (int i = 0; i < 4; i++) {
 		memset(data, (uint8_t)i, sizeof(data));
-		int ret = venc_ring_write(r, data, sizeof(data), NULL, 0, 0);
+		int ret = venc_ring_write(r, data, sizeof(data), NULL, 0, 0, 0);
 		CHECK("fd_fill", ret == 0);
 	}
 
 	/* 5th write should fail (ring full) */
-	int ret = venc_ring_write(r, data, sizeof(data), NULL, 0, 0);
+	int ret = venc_ring_write(r, data, sizeof(data), NULL, 0, 0, 0);
 	CHECK("fd_full", ret == -1);
 
 	/* Drain all 4 and verify ordering */
 	uint8_t buf[32];
 	uint16_t out_len;
 	for (int i = 0; i < 4; i++) {
-		ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL);
+		ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 		CHECK("fd_drain_ok", ret == 0);
 		CHECK("fd_drain_len", out_len == 8);
 		CHECK("fd_drain_data", buf[0] == (uint8_t)i);
 	}
 
 	/* Should be empty */
-	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("fd_empty", ret == -1);
 
 	venc_ring_destroy(r);
@@ -272,10 +278,10 @@ static int test_wraparound(void)
 	/* Write and read 10 times (wraps around 4-slot ring multiple times) */
 	for (int i = 0; i < 10; i++) {
 		memset(data, (uint8_t)i, sizeof(data));
-		int ret = venc_ring_write(r, data, sizeof(data), NULL, 0, 0);
+		int ret = venc_ring_write(r, data, sizeof(data), NULL, 0, 0, 0);
 		CHECK("wrap_write", ret == 0);
 
-		ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL);
+		ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 		CHECK("wrap_read", ret == 0);
 		CHECK("wrap_data", buf[0] == (uint8_t)i);
 	}
@@ -305,7 +311,7 @@ static void *producer_thread(void *arg)
 		/* Encode sequence number in header */
 		hdr[0] = (uint8_t)(i & 0xFF);
 		hdr[1] = (uint8_t)((i >> 8) & 0xFF);
-		while (venc_ring_write(ta->ring, hdr, 4, NULL, 0, 0) != 0) {
+		while (venc_ring_write(ta->ring, hdr, 4, NULL, 0, 0, 0) != 0) {
 			/* Ring full — spin briefly */
 			usleep(1);
 		}
@@ -320,7 +326,7 @@ static void *consumer_thread(void *arg)
 	uint16_t out_len;
 	int expected = 0;
 	for (int i = 0; i < CONCURRENT_COUNT; i++) {
-		while (venc_ring_read(ta->ring, buf, sizeof(buf), &out_len, NULL) != 0) {
+		while (venc_ring_read(ta->ring, buf, sizeof(buf), &out_len, NULL, NULL) != 0) {
 			usleep(1);
 		}
 		int seq = buf[0] | (buf[1] << 8);
@@ -437,7 +443,7 @@ static int test_corrupt_slot_length(void)
 	/* Write a valid packet */
 	uint8_t data[16];
 	memset(data, 0xAA, sizeof(data));
-	int ret = venc_ring_write(producer, data, 16, NULL, 0, 0);
+	int ret = venc_ring_write(producer, data, 16, NULL, 0, 0, 0);
 	CHECK("corrupt_slot_write", ret == 0);
 
 	/* Manually corrupt the slot length to exceed slot_data_size */
@@ -450,7 +456,7 @@ static int test_corrupt_slot_length(void)
 
 	uint8_t buf[128];
 	uint16_t out_len = 0;
-	ret = venc_ring_read(consumer, buf, sizeof(buf), &out_len, NULL);
+	ret = venc_ring_read(consumer, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("corrupt_slot_read_fail", ret == -1);
 	CHECK("corrupt_slot_bad_drops", consumer->stats.bad_slot_drops == 1);
 
@@ -516,23 +522,23 @@ static int test_stats_counters(void)
 	/* Oversize write → oversize_drops */
 	uint8_t big[64];
 	memset(big, 0xFF, sizeof(big));
-	venc_ring_write(r, big, 32, big, 16, 0);  /* 48 > 32 */
+	venc_ring_write(r, big, 32, big, 16, 0, 0);  /* 48 > 32 */
 	CHECK("stats_oversize", r->stats.oversize_drops == 1);
 
 	/* Normal writes (fill 2 slots) */
-	venc_ring_write(r, data, 8, NULL, 0, 0);
-	venc_ring_write(r, data, 8, NULL, 0, 0);
+	venc_ring_write(r, data, 8, NULL, 0, 0, 0);
+	venc_ring_write(r, data, 8, NULL, 0, 0, 0);
 	CHECK("stats_writes", r->stats.writes == 2);
 
 	/* Full drop */
-	venc_ring_write(r, data, 8, NULL, 0, 0);
+	venc_ring_write(r, data, 8, NULL, 0, 0, 0);
 	CHECK("stats_full_drop", r->stats.full_drops == 1);
 
 	/* Read 2 packets */
 	uint8_t buf[64];
 	uint16_t out_len;
-	venc_ring_read(r, buf, sizeof(buf), &out_len, NULL);
-	venc_ring_read(r, buf, sizeof(buf), &out_len, NULL);
+	venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
+	venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("stats_reads", r->stats.reads == 2);
 
 	venc_ring_destroy(r);
@@ -552,18 +558,18 @@ static int test_write_u16_overflow(void)
 	 * but total is computed as uint32_t, so it correctly exceeds slot_data_size
 	 * and is rejected */
 	uint8_t dummy[1] = {0};
-	int ret = venc_ring_write(r, NULL, 0, dummy, 1, 0);
+	int ret = venc_ring_write(r, NULL, 0, dummy, 1, 0, 0);
 	CHECK("u16ov_small_ok", ret == 0);
 
 	/* This should succeed: exactly at limit */
 	uint8_t *big = (uint8_t *)calloc(1, 65535);
 	CHECK("u16ov_alloc", big != NULL);
 	if (big) {
-		ret = venc_ring_write(r, big, 65535, NULL, 0, 0);
+		ret = venc_ring_write(r, big, 65535, NULL, 0, 0, 0);
 		CHECK("u16ov_max_ok", ret == 0);
 
 		/* This should fail: 65535 + 1 = 65536 > 65535 */
-		ret = venc_ring_write(r, big, 65535, dummy, 1, 0);
+		ret = venc_ring_write(r, big, 65535, dummy, 1, 0, 0);
 		CHECK("u16ov_exceed_fail", ret == -1);
 		free(big);
 	}

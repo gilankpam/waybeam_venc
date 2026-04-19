@@ -24,6 +24,12 @@
 #include <time.h>
 #endif
 
+#ifdef __cplusplus
+#define VENC_RING_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
+#else
+#define VENC_RING_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#endif
+
 #define VENC_RING_MAGIC   0x56454E43  /* "VENC" */
 #define VENC_RING_VERSION 3
 
@@ -55,21 +61,21 @@ typedef struct __attribute__((aligned(64))) {
 	uint8_t  _pad2[52];
 } venc_ring_hdr_t;
 
-_Static_assert(sizeof(venc_ring_hdr_t) == 192,
+VENC_RING_STATIC_ASSERT(sizeof(venc_ring_hdr_t) == 192,
                "venc_ring_hdr_t must be exactly 192 bytes (3 cache lines)");
-_Static_assert(__alignof__(venc_ring_hdr_t) == 64,
+VENC_RING_STATIC_ASSERT(__alignof__(venc_ring_hdr_t) == 64,
                "venc_ring_hdr_t must be 64-byte aligned");
 
-/* Per-slot layout: 2-byte length + 1-byte flags + 1 reserved byte + data.
+/* Per-slot layout: 2-byte length + 1-byte flags + 1-byte fec_k_hint + data.
  * Total header is 4 bytes so slot data stays 4-byte aligned. */
 typedef struct {
 	uint16_t length;
-	uint8_t  flags;      /* RING_SLOT_FLAG_* bits */
-	uint8_t  _reserved;  /* must be 0; reserved for future metadata */
-	uint8_t  data[];     /* flexible array [slot_data_size] */
+	uint8_t  flags;         /* RING_SLOT_FLAG_* bits */
+	uint8_t  fec_k_hint;    /* producer-suggested FEC k (0 = no hint) */
+	uint8_t  data[];        /* flexible array [slot_data_size] */
 } venc_ring_slot_t;
 
-_Static_assert(offsetof(venc_ring_slot_t, data) == 4,
+VENC_RING_STATIC_ASSERT(offsetof(venc_ring_slot_t, data) == 4,
                "venc_ring_slot_t header must be exactly 4 bytes");
 
 /* Observability counters (local handle, not in SHM) */
@@ -119,7 +125,7 @@ static inline venc_ring_slot_t *venc_ring_slot_at(const venc_ring_t *r,
 static inline int venc_ring_write(venc_ring_t *r,
     const void *hdr, uint16_t hdr_len,
     const void *payload, uint16_t payload_len,
-    uint8_t flags)
+    uint8_t flags, uint8_t fec_k_hint)
 {
 	uint32_t total = (uint32_t)hdr_len + (uint32_t)payload_len;
 	if (total > r->slot_data_size) {
@@ -139,7 +145,7 @@ static inline int venc_ring_write(venc_ring_t *r,
 	venc_ring_slot_t *slot = venc_ring_slot_at(r, idx);
 	slot->length = (uint16_t)total;
 	slot->flags = flags;
-	slot->_reserved = 0;
+	slot->fec_k_hint = fec_k_hint;
 	if (hdr_len)
 		memcpy(slot->data, hdr, hdr_len);
 	if (payload_len)
@@ -161,9 +167,11 @@ static inline int venc_ring_write(venc_ring_t *r,
 /* ── Inline read (consumer) ──────────────────────────────────────────── */
 
 static inline int venc_ring_read(venc_ring_t *r,
-    void *buf, uint16_t buf_size, uint16_t *out_len, uint8_t *out_flags)
+    void *buf, uint16_t buf_size, uint16_t *out_len, uint8_t *out_flags,
+    uint8_t *out_fec_k_hint)
 {
 	if (out_flags) *out_flags = 0;
+	if (out_fec_k_hint) *out_fec_k_hint = 0;
 
 	uint64_t rd = __atomic_load_n(&r->hdr->read_idx, __ATOMIC_RELAXED);
 	uint64_t w = __atomic_load_n(&r->hdr->write_idx, __ATOMIC_ACQUIRE);
@@ -176,6 +184,7 @@ static inline int venc_ring_read(venc_ring_t *r,
 
 	uint16_t len = slot->length;
 	uint8_t flags = slot->flags;
+	uint8_t fec_k_hint = slot->fec_k_hint;
 
 	/* Validate slot length against slot_data_size */
 	if (len > r->slot_data_size) {
@@ -190,6 +199,7 @@ static inline int venc_ring_read(venc_ring_t *r,
 	memcpy(buf, slot->data, len);
 	if (out_len) *out_len = len;
 	if (out_flags) *out_flags = flags;
+	if (out_fec_k_hint) *out_fec_k_hint = fec_k_hint;
 
 	__atomic_store_n(&r->hdr->read_idx, rd + 1, __ATOMIC_RELEASE);
 	r->stats.reads++;
@@ -199,10 +209,11 @@ static inline int venc_ring_read(venc_ring_t *r,
 /* Blocking read with futex wait (consumer). timeout_ms <= 0 = infinite. */
 static inline int venc_ring_read_wait(venc_ring_t *r,
     void *buf, uint16_t buf_size, uint16_t *out_len, uint8_t *out_flags,
-    int timeout_ms)
+    uint8_t *out_fec_k_hint, int timeout_ms)
 {
 	for (;;) {
-		if (venc_ring_read(r, buf, buf_size, out_len, out_flags) == 0)
+		if (venc_ring_read(r, buf, buf_size, out_len, out_flags,
+		    out_fec_k_hint) == 0)
 			return 0;
 
 #ifdef __linux__
@@ -225,7 +236,8 @@ static inline int venc_ring_read_wait(venc_ring_t *r,
 		usleep(1000);
 #endif
 		/* Re-check after wake */
-		if (venc_ring_read(r, buf, buf_size, out_len, out_flags) == 0)
+		if (venc_ring_read(r, buf, buf_size, out_len, out_flags,
+		    out_fec_k_hint) == 0)
 			return 0;
 
 		if (timeout_ms > 0)

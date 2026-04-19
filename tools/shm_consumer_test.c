@@ -45,7 +45,7 @@ int main(int argc, char **argv)
 	unsigned long interval_bytes = 0;
 
 	while (running) {
-		int ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &slot_flags);
+		int ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &slot_flags, NULL);
 		if (ret == 0) {
 			total_pkts++;
 			total_bytes += out_len;
@@ -55,7 +55,7 @@ int main(int argc, char **argv)
 		} else {
 			/* Ring empty — use futex wait with 100ms timeout */
 			ret = venc_ring_read_wait(r, buf, sizeof(buf), &out_len,
-				&slot_flags, 100);
+				&slot_flags, NULL, 100);
 			if (ret == 0) {
 				total_pkts++;
 				total_bytes += out_len;

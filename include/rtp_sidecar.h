@@ -140,7 +140,9 @@ typedef struct {
 
 #pragma pack(pop)
 
-/* Host-order encoder feedback passed to rtp_sidecar_send_frame(). */
+/* Host-order encoder feedback passed to rtp_sidecar_send_frame().
+ * fec_k_hint is internal to venc → wfb_tx (SHM path); it is NOT serialized
+ * onto the wire sidecar and is not visible to the ground probe. */
 typedef struct {
 	uint32_t frame_size_bytes;
 	uint8_t  frame_type;
@@ -150,6 +152,7 @@ typedef struct {
 	uint8_t  gop_state;
 	uint8_t  idr_inserted;
 	uint16_t frames_since_idr;
+	uint8_t  fec_k_hint;        /* stats-derived k for this frame's type (0 = warmup) */
 } RtpSidecarEncInfo;
 
 /* ── Sender state (embedded in backend, not used by probe) ───────────── */

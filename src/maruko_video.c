@@ -44,10 +44,10 @@ static int maruko_rtp_write(const uint8_t *header, size_t header_len,
 			memcpy(flat + payload1_len, payload2, payload2_len);
 			return venc_ring_write(ctx->ring, header,
 				(uint16_t)header_len, flat,
-				(uint16_t)total_payload, flags);
+				(uint16_t)total_payload, flags, 0);
 		}
 		return venc_ring_write(ctx->ring, header, (uint16_t)header_len,
-			payload1, (uint16_t)payload1_len, flags);
+			payload1, (uint16_t)payload1_len, flags, 0);
 	}
 
 	/* Socket path */

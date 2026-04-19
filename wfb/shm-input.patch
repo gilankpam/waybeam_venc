@@ -1,5 +1,5 @@
 diff --git a/src/tx.cpp b/src/tx.cpp
-index 0dec131..44ed992 100644
+index 0dec131..e4c1ec1 100644
 --- a/src/tx.cpp
 +++ b/src/tx.cpp
 @@ -42,6 +42,12 @@
@@ -15,7 +15,210 @@ index 0dec131..44ed992 100644
  
  using namespace std;
  
-@@ -739,10 +745,13 @@ uint32_t extract_rxq_overflow(struct msghdr *msg)
+@@ -51,6 +57,7 @@ using namespace std;
+ Transmitter::Transmitter(int k, int n, const string &keypair, uint64_t epoch, uint32_t channel_id, uint32_t fec_delay, vector<tags_item_t> &tags) : \
+     fec_p(NULL), fec_k(-1), fec_n(-1),
+     block_idx(0), fragment_idx(0),
++    block(NULL),
+     max_packet_size(0),
+     epoch(epoch),
+     channel_id(channel_id),
+@@ -89,59 +96,68 @@ Transmitter::~Transmitter()
+     {
+         deinit_session();
+     }
++    // Free remaining matrix cache entries (some may never have been installed
++    // as the active fec_p).
++    for(auto it = fec_cache.begin(); it != fec_cache.end(); ++it)
++    {
++        fec_free(it->fec_p);
++    }
++    fec_cache.clear();
++    // block[] is owned long-term — free here.
++    if (block != NULL)
++    {
++        for(int i=0; i < TX_MAX_FEC_N; i++)
++        {
++            if (block[i]) free(block[i]);
++        }
++        delete[] block;
++        block = NULL;
++    }
+ }
+ 
+ 
++// Phase 3: deinit_session clears the active fec_p/fec_k/fec_n but leaves
++// block[] and the matrix cache intact.  On CMD_SET_FEC the cache is kept
++// (re-used when re-switching to the same k) — matrices only leave the
++// cache via LRU eviction or destructor cleanup.
+ void Transmitter::deinit_session(void)
+ {
+-    for(int i=0; i < fec_n; i++)
+-    {
+-        free(block[i]);
+-    }
+-
+-    delete[] block;
+-
+-    zfex_status_code_t rc = fec_free(fec_p);
+-    assert(rc == ZFEX_SC_OK);
+-
+-    block = NULL;
++    // fec_p points into fec_cache — do NOT free it here.
+     fec_p = NULL;
+     fec_k = -1;
+     fec_n = -1;
+ }
+ 
+-void Transmitter::init_session(int k, int n)
++// Cache lookup with LRU + insertion + eviction.  Returns a cached fec_t*
++// for (k, n), creating it with fec_new() on miss.
++fec_t *Transmitter::fec_cache_lookup(int k, int n)
+ {
+-    if (fec_p != NULL)
++    for (auto it = fec_cache.begin(); it != fec_cache.end(); ++it)
+     {
+-        deinit_session();
++        if (it->k == k && it->n == n)
++        {
++            if (it != fec_cache.begin())
++            {
++                fec_cache.splice(fec_cache.begin(), fec_cache, it);
++            }
++            return fec_cache.front().fec_p;
++        }
+     }
+-
+-    assert(fec_p == NULL);
+-    assert(k >= 1);
+-    assert(n >= 1);
+-    assert(n < 256);
+-    assert(k <= n);
+-
+-    fec_k = k;
+-    fec_n = n;
+-
+-    zfex_status_code_t rc = fec_new(fec_k, fec_n, &fec_p);
++    // Miss — build and insert at front.
++    fec_t *p = NULL;
++    zfex_status_code_t rc = fec_new(k, n, &p);
+     assert(rc == ZFEX_SC_OK);
+-
+-    block = new uint8_t*[fec_n];
+-    for(int i=0; i < fec_n; i++)
++    fec_cache.push_front({k, n, p});
++    while (fec_cache.size() > TX_FEC_CACHE_CAP)
+     {
+-        int _rc = posix_memalign((void**)&block[i], ZFEX_SIMD_ALIGNMENT, ZFEX_ROUND_UP_SIMD(MAX_FEC_PAYLOAD));
+-        assert(_rc == 0);
++        fec_free(fec_cache.back().fec_p);
++        fec_cache.pop_back();
+     }
++    return p;
++}
+ 
+-    block_idx = 0;
+-    fragment_idx = 0;
+-
+-    // init session key
+-    randombytes_buf(session_key, sizeof(session_key));
+-
++void Transmitter::build_session_packet(void)
++{
+     // fill packet header
+     wsession_hdr_t *session_hdr = (wsession_hdr_t *)session_packet;
+     session_hdr->packet_type = WFB_PACKET_SESSION;
+@@ -149,10 +165,8 @@ void Transmitter::init_session(int k, int n)
+     randombytes_buf(session_hdr->session_nonce, sizeof(session_hdr->session_nonce));
+ 
+     // fill packet contents
+-
+     uint8_t tmp[MAX_SESSION_PACKET_SIZE - crypto_box_MACBYTES - sizeof(wsession_hdr_t)];
+ 
+-    // Fill fixed headers
+     {
+         wsession_data_t* session_data = (wsession_data_t*)tmp;
+         assert(sizeof(*session_data) <= sizeof(tmp));
+@@ -167,8 +181,6 @@ void Transmitter::init_session(int k, int n)
+         memcpy(session_data->session_key, session_key, sizeof(session_key));
+     }
+ 
+-    // Fill optional Tags
+-
+     uint32_t session_data_size = sizeof(wsession_data_t);
+     for(auto it = tags.begin(); it != tags.end(); it++)
+     {
+@@ -192,6 +204,69 @@ void Transmitter::init_session(int k, int n)
+     assert(session_packet_size <= MAX_SESSION_PACKET_SIZE);
+ }
+ 
++void Transmitter::init_session(int k, int n)
++{
++    if (fec_p != NULL)
++    {
++        deinit_session();
++    }
++
++    assert(k >= 1);
++    assert(n >= 1);
++    assert(n <= TX_MAX_FEC_N);
++    assert(k <= n);
++
++    fec_k = k;
++    fec_n = n;
++
++    // Allocate block[] once with the maximum possible size.  n may grow
++    // (via fast_switch_to) up to TX_MAX_FEC_N without ever reallocating.
++    if (block == NULL)
++    {
++        block = new uint8_t*[TX_MAX_FEC_N];
++        for(int i=0; i < TX_MAX_FEC_N; i++)
++        {
++            int _rc = posix_memalign((void**)&block[i], ZFEX_SIMD_ALIGNMENT, ZFEX_ROUND_UP_SIMD(MAX_FEC_PAYLOAD));
++            assert(_rc == 0);
++        }
++    }
++
++    fec_p = fec_cache_lookup(fec_k, fec_n);
++
++    block_idx = 0;
++    fragment_idx = 0;
++
++    // init session key
++    randombytes_buf(session_key, sizeof(session_key));
++
++    build_session_packet();
++}
++
++// Phase 3: fast-switch to a new (k, n) without fec_new, block realloc, or
++// deinit_session.  Caller MUST have flushed any open block first (i.e.
++// fragment_idx == 0) via `while(send_packet(NULL, 0, WFB_PACKET_FEC_ONLY));`.
++// Rotates the session_key (required — RX ignores k/n changes unless the
++// session_key itself differs, rx.cpp:686).
++void Transmitter::fast_switch_to(int k, int n)
++{
++    assert(fragment_idx == 0);
++    assert(k >= 1 && n >= 1 && n <= TX_MAX_FEC_N && k <= n);
++
++    if (k == fec_k && n == fec_n)
++    {
++        return;  // no-op
++    }
++
++    fec_k = k;
++    fec_n = n;
++    fec_p = fec_cache_lookup(fec_k, fec_n);
++
++    // block_idx is a 64-bit nonce counter; keep it monotonic across switches
++    // (RX treats the rotated session_key as the authoritative boundary).
++    randombytes_buf(session_key, sizeof(session_key));
++    build_session_packet();
++}
++
+ 
+ RawSocketTransmitter::RawSocketTransmitter(int k, int n, const string &keypair, uint64_t epoch, uint32_t channel_id, uint32_t fec_delay,
+                                            vector<tags_item_t> &tags, const vector<string> &wlans, radiotap_header_t &radiotap_header,
+@@ -739,10 +814,13 @@ uint32_t extract_rxq_overflow(struct msghdr *msg)
      return 0;
  }
  
@@ -31,7 +234,7 @@ index 0dec131..44ed992 100644
  
      struct pollfd fds[nfds + 1];
      memset(fds, '\0', sizeof(fds));
-@@ -769,6 +778,44 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -769,6 +847,44 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
      uint32_t count_p_truncated = 0; // injected large packets that were truncated
      int start_fd_idx = 0;
  
@@ -42,10 +245,10 @@ index 0dec131..44ed992 100644
 +    int shm_poll_timeout_ms = 1;
 +    int shm_reattach_backoff_ms = 100;
 +    uint64_t shm_next_reattach_ts = 0;
-+    int normal_fec_k = 0;
-+    int normal_fec_n = 0;
-+    bool idr_fec_active = false;
-+    t->get_fec(normal_fec_k, normal_fec_n);
++    // Phase 3: track frame boundary so fec_k_hint is applied once per frame
++    // (on the first packet after EOF).  Initial true = treat first packet
++    // as a frame start.
++    bool last_was_eof = true;
 +
 +    if (use_shm)
 +    {
@@ -76,7 +279,7 @@ index 0dec131..44ed992 100644
      for(;;)
      {
          uint64_t cur_ts = get_time_ms();
-@@ -779,7 +826,16 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -779,7 +895,16 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
              poll_timeout = std::min(poll_timeout, (int)(fec_close_ts > cur_ts ? fec_close_ts - cur_ts : 0));
          }
  
@@ -94,17 +297,49 @@ index 0dec131..44ed992 100644
  
          if (rc < 0)
          {
-@@ -876,5 +932,9 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
-                     t->init_session(fec_k, fec_n);
-
-+                    // Update IDR FEC boost baseline after dynamic FEC change
-+                    normal_fec_k = fec_k;
-+                    normal_fec_n = fec_n;
-+                    idr_fec_active = false;
-                     // Emulate FEC for initial session key distribution
-                     for(int i = 0; i < fec_n - fec_k + 1; i++)
-                     {
-@@ -980,7 +1040,7 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -852,37 +977,11 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+                 {
+                 case CMD_SET_FEC:
+                 {
+-                    if (rsize != offsetof(cmd_req_t, u) + sizeof(req.u.cmd_set_fec))
+-                    {
+-                        resp.rc = htonl(EINVAL);
+-                        sendto(fd, &resp, offsetof(cmd_resp_t, u), MSG_DONTWAIT, (sockaddr*)&from_addr, addr_size);
+-                        continue;
+-                    }
+-
+-                    int fec_k = req.u.cmd_set_fec.k;
+-                    int fec_n = req.u.cmd_set_fec.n;
+-
+-                    if(!(fec_k <= fec_n && fec_k >=1 && fec_n >= 1 && fec_n < 256))
+-                    {
+-                        resp.rc = htonl(EINVAL);
+-                        sendto(fd, &resp, offsetof(cmd_resp_t, u), MSG_DONTWAIT, (sockaddr*)&from_addr, addr_size);
+-                        WFB_ERR("Rejecting new FEC settings");
+-                        continue;
+-                    }
+-
+-                    // Close open FEC block if any
+-                    while(t->send_packet(NULL, 0, WFB_PACKET_FEC_ONLY));
+-
+-                    t->init_session(fec_k, fec_n);
+-
+-                    // Emulate FEC for initial session key distribution
+-                    for(int i = 0; i < fec_n - fec_k + 1; i++)
+-                    {
+-                        t->send_session_key();
+-                    }
+-
++                    // Phase 3: FEC is now drone-controlled per frame (via
++                    // venc's fec_k_hint).  GS-side overrides are rejected.
++                    resp.rc = htonl(EPERM);
+                     sendto(fd, &resp, offsetof(cmd_resp_t, u), MSG_DONTWAIT, (sockaddr*)&from_addr, addr_size);
+-                    WFB_INFO("Session restarted with FEC %d/%d\n", fec_k, fec_n);
++                    WFB_INFO("CMD_SET_FEC rejected: FEC is drone-controlled\n");
+                 }
+                 break;
+ 
+@@ -980,7 +1079,7 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
              }
          }
  
@@ -113,7 +348,7 @@ index 0dec131..44ed992 100644
          {
              // close fec only if no data packets and fec timeout expired
              if (fec_timeout > 0 && cur_ts >= fec_close_ts)
-@@ -994,6 +1054,188 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
+@@ -994,6 +1093,192 @@ void data_source(unique_ptr<Transmitter> &t, vector<int> &rx_fd, int control_fd,
              continue;
          }
  
@@ -192,13 +427,14 @@ index 0dec131..44ed992 100644
 +            uint8_t buf[MAX_PAYLOAD_SIZE + 1];
 +            uint16_t out_len;
 +            uint8_t slot_flags;
++            uint8_t slot_fec_k_hint;
 +            bool got_shm_packet = false;
 +            bool got_eof_flush = false;
 +
 +            // Drain all available packets from ring
 +            for(;;)
 +            {
-+                int ret = venc_ring_read(g_shm_ring, buf, sizeof(buf), &out_len, &slot_flags);
++                int ret = venc_ring_read(g_shm_ring, buf, sizeof(buf), &out_len, &slot_flags, &slot_fec_k_hint);
 +                if (ret != 0)
 +                    break;
 +
@@ -223,28 +459,30 @@ index 0dec131..44ed992 100644
 +                    session_key_announce_ts = cur_ts + SESSION_KEY_ANNOUNCE_MSEC;
 +                }
 +
-+                // IDR FEC boost: switch to 50% redundancy for IDR frames
++                // Phase 3: at frame start, apply venc's fec_k_hint + IDR
++                // flag.  Derive n = ceil(k * 1.25) for P, ceil(k * 1.5)
++                // for IDR.  Switch via matrix cache (no fec_new/realloc).
++                if (last_was_eof && slot_fec_k_hint > 0)
 +                {
++                    int target_k = slot_fec_k_hint;
 +                    bool is_idr = (slot_flags & RING_SLOT_FLAG_IDR) != 0;
-+                    if (is_idr && !idr_fec_active)
++                    int target_n = is_idr
++                        ? (target_k * 3 + 1) / 2      // ceil(k * 1.5)
++                        : (target_k * 5 + 3) / 4;     // ceil(k * 1.25)
++                    if (target_n < target_k + 1) target_n = target_k + 1;
++                    if (target_n > TX_MAX_FEC_N) target_n = TX_MAX_FEC_N;
++
++                    int cur_k, cur_n;
++                    t->get_fec(cur_k, cur_n);
++                    if (target_k != cur_k || target_n != cur_n)
 +                    {
 +                        while(t->send_packet(NULL, 0, WFB_PACKET_FEC_ONLY));
-+                        int idr_k = normal_fec_n / 2;
-+                        if (idr_k < 1) idr_k = 1;
-+                        t->init_session(idr_k, normal_fec_n);
-+                        for(int i = 0; i < normal_fec_n - idr_k + 1; i++)
++                        t->fast_switch_to(target_k, target_n);
++                        for(int i = 0; i < target_n - target_k + 1; i++)
 +                            t->send_session_key();
-+                        idr_fec_active = true;
-+                    }
-+                    else if (!is_idr && idr_fec_active)
-+                    {
-+                        while(t->send_packet(NULL, 0, WFB_PACKET_FEC_ONLY));
-+                        t->init_session(normal_fec_k, normal_fec_n);
-+                        for(int i = 0; i < normal_fec_n - normal_fec_k + 1; i++)
-+                            t->send_session_key();
-+                        idr_fec_active = false;
 +                    }
 +                }
++                last_was_eof = false;
 +
 +                t->send_packet(buf, rsize, 0);
 +
@@ -255,6 +493,7 @@ index 0dec131..44ed992 100644
 +                {
 +                    while(t->send_packet(NULL, 0, WFB_PACKET_FEC_ONLY));
 +                    got_eof_flush = true;
++                    last_was_eof = true;
 +                }
 +
 +                if (cur_ts >= log_send_ts)
@@ -302,7 +541,7 @@ index 0dec131..44ed992 100644
          // rc > 0: events detected
          // start from last fd index and reset it to zero
          int _tmp = start_fd_idx;
-@@ -1526,6 +1768,52 @@ void local_loop_unix(int argc, char* const* argv, int optind, int rcv_buf, int l
+@@ -1526,6 +1811,52 @@ void local_loop_unix(int argc, char* const* argv, int optind, int rcv_buf, int l
  }
  
  
@@ -355,7 +594,7 @@ index 0dec131..44ed992 100644
  void distributor_loop(int argc, char* const* argv, int optind, int rcv_buf, int log_interval,
                        int udp_port, int k, int n, const string &keypair, int fec_timeout,
                        uint64_t epoch, uint32_t channel_id, uint32_t fec_delay, bool use_qdisc, uint32_t fwmark,
-@@ -1669,6 +1957,7 @@ int main(int argc, char * const *argv)
+@@ -1669,6 +2000,7 @@ int main(int argc, char * const *argv)
      int opt;
      uint8_t k=8, n=12, radio_port=0;
      uint32_t fec_delay = 0;
@@ -363,7 +602,7 @@ index 0dec131..44ed992 100644
      uint32_t link_id = 0x0;
      uint64_t epoch = 0;
      int srv_port = 10000;
-@@ -1697,7 +1986,7 @@ int main(int argc, char * const *argv)
+@@ -1697,7 +2029,7 @@ int main(int argc, char * const *argv)
      uint32_t inject_retries = 0;
      uint32_t inject_retry_delay = 5000; // 5ms
  
@@ -372,7 +611,7 @@ index 0dec131..44ed992 100644
          switch (opt) {
          case 'I':
              tx_mode = INJECTOR;
-@@ -1814,9 +2103,13 @@ int main(int argc, char * const *argv)
+@@ -1814,9 +2146,13 @@ int main(int argc, char * const *argv)
              inject_retry_delay = atoi(optarg);
              break;
  
@@ -387,7 +626,7 @@ index 0dec131..44ed992 100644
                       "             [-F fec_delay] [-B bandwidth] [-G guard_interval] [-S stbc] [-L ldpc] [-M mcs_index] [-N VHT_NSS]\n"
                       "             [-T fec_timeout] [-l log_interval] [-e epoch] [-i link_id] [-f { data | rts }] [-m] [-V] [-Q]\n"
                       "             [-P fwmark] [-J inject_retries] [-E inject_retry_delay] [-C control_port] interface1 [interface2] ...\n",
-@@ -1882,6 +2175,14 @@ int main(int argc, char * const *argv)
+@@ -1882,6 +2218,14 @@ int main(int argc, char * const *argv)
                                  radiotap_header, frame_type, control_port, mirror,
                                  snd_buf, inject_retries, inject_retry_delay);
              }
@@ -402,3 +641,60 @@ index 0dec131..44ed992 100644
              else
              {
                  local_loop_udp(argc, argv, optind, rcv_buf, log_interval,
+diff --git a/src/tx.hpp b/src/tx.hpp
+index 39506e6..42f5ef9 100644
+--- a/src/tx.hpp
++++ b/src/tx.hpp
+@@ -27,6 +27,7 @@
+ #include <string>
+ #include <vector>
+ #include <map>
++#include <list>
+ #include <string.h>
+ #include <stdexcept>
+ 
+@@ -69,6 +70,12 @@ typedef enum {
+     DISTRIBUTOR
+ } tx_mode_t;
+ 
++// Phase 3: cap n at 96 so block[] is sized once and covers any (k,n) the
++// drone hints.  Phase 3 redundancy ratios max out at 1.5× → 96 is enough
++// for k=64.  Cache holds pre-built fec_t* per unique (k,n) with LRU eviction.
++#define TX_MAX_FEC_N 96
++#define TX_FEC_CACHE_CAP 8
++
+ class Transmitter
+ {
+ public:
+@@ -78,6 +85,9 @@ public:
+     void send_session_key(void);
+     void init_session(int k, int n);
+     void get_fec(int &k, int &n) { k = fec_k; n = fec_n; }
++    // Phase 3: swap to cached (k, n) without fec_new/block realloc.
++    // Caller must have flushed any open block before calling.
++    void fast_switch_to(int k, int n);
+     virtual void select_output(int idx) = 0;
+     virtual void dump_stats(uint64_t ts, uint32_t &injected_packets, uint32_t &dropped_packets, uint32_t &injected_bytes) = 0;
+     virtual void update_radiotap_header(radiotap_header_t &radiotap_header) = 0;
+@@ -91,6 +101,9 @@ private:
+     Transmitter& operator=(const Transmitter&);
+     void send_block_fragment(size_t packet_size);
+     void deinit_session(void);
++    // Phase 3 helpers
++    void build_session_packet(void);
++    fec_t *fec_cache_lookup(int k, int n);
+ 
+     fec_t* fec_p;
+     int fec_k;  // RS number of primary fragments in block
+@@ -110,6 +123,11 @@ private:
+     uint8_t session_packet[MAX_SESSION_PACKET_SIZE];
+     uint16_t session_packet_size;
+     std::vector<tags_item_t> tags;
++
++    // Phase 3: matrix cache.  MRU at front; oldest at back.  Capped so
++    // transient stats drift doesn't grow fec_cache unboundedly.
++    struct fec_cache_entry { int k; int n; fec_t *fec_p; };
++    std::list<fec_cache_entry> fec_cache;
+ };
+ 
+ 
