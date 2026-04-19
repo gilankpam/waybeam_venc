@@ -11,3 +11,5 @@ tests/test_runner
 tests/test_imu_ring
 
 enc-ctrl/tests/test_runner
+
+wfb-ng-upstream/
