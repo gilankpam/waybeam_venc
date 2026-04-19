@@ -29,6 +29,7 @@
 
 /* Per-slot flag bits (slot->flags) */
 #define RING_SLOT_FLAG_EOF 0x01u  /* last RTP packet of a video frame */
+#define RING_SLOT_FLAG_IDR 0x02u  /* RTP packet belongs to an IDR frame */
 
 /* ── Ring header (3 cache lines, 192 bytes) ──────────────────────────── */
 

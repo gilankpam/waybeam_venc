@@ -34,6 +34,7 @@ typedef struct {
 	venc_ring_t *ring;
 	uint32_t send_errors;
 	uint32_t transport_gen; /* seqlock: odd = write in progress, even = stable */
+	uint8_t ring_slot_extra_flags; /* ORed into every ring slot's flags field */
 } Star6eOutput;
 
 typedef struct {

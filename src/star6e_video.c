@@ -111,8 +111,12 @@ size_t star6e_video_send_frame(Star6eVideoState *state,
 		uint64_t capture_us = (stream->count > 0 && stream->packet)
 			? stream->packet[0].timestamp : 0;
 
+		output->ring_slot_extra_flags =
+			(enc_info && enc_info->frame_type >= 2)
+			? RING_SLOT_FLAG_IDR : 0;
 		total_bytes = star6e_output_send_frame(output, stream,
 			state->max_frame_size, send_frame_output_rtp, &rtp_frame);
+		output->ring_slot_extra_flags = 0;
 
 		rtp_sidecar_send_frame(&state->sidecar,
 			state->rtp_state.ssrc, frame_rtp_ts,

@@ -36,6 +36,7 @@ static int star6e_hevc_rtp_write(const uint8_t *header, size_t header_len,
 	/* RTP marker bit (header byte 1, bit 7) = last packet of frame. */
 	if (header_len >= 2 && (header[1] & 0x80))
 		flags |= RING_SLOT_FLAG_EOF;
+	flags |= ((Star6eOutput *)opaque)->ring_slot_extra_flags;
 	return star6e_output_send_rtp_parts(opaque, header, header_len,
 		payload1, payload1_len, payload2, payload2_len, flags);
 }
