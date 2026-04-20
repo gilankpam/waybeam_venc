@@ -10,18 +10,32 @@
  * Consumer sleep: futex on futex_seq (dedicated 32-bit word).
  */
 
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #ifdef __linux__
 #include <linux/futex.h>
 #include <sys/syscall.h>
 #include <time.h>
-#include <unistd.h>
+#endif
+
+#ifdef __cplusplus
+#define VENC_RING_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
+#else
+#define VENC_RING_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
 #endif
 
 #define VENC_RING_MAGIC   0x56454E43  /* "VENC" */
-#define VENC_RING_VERSION 2
+#define VENC_RING_VERSION 3
+
+/* Per-slot flag bits (slot->flags) */
+#define RING_SLOT_FLAG_EOF 0x01u  /* last RTP packet of a video frame */
+#define RING_SLOT_FLAG_IDR 0x02u  /* RTP packet belongs to an IDR frame */
 
 /* ── Ring header (3 cache lines, 192 bytes) ──────────────────────────── */
 
@@ -47,16 +61,22 @@ typedef struct __attribute__((aligned(64))) {
 	uint8_t  _pad2[52];
 } venc_ring_hdr_t;
 
-_Static_assert(sizeof(venc_ring_hdr_t) == 192,
+VENC_RING_STATIC_ASSERT(sizeof(venc_ring_hdr_t) == 192,
                "venc_ring_hdr_t must be exactly 192 bytes (3 cache lines)");
-_Static_assert(__alignof__(venc_ring_hdr_t) == 64,
+VENC_RING_STATIC_ASSERT(__alignof__(venc_ring_hdr_t) == 64,
                "venc_ring_hdr_t must be 64-byte aligned");
 
-/* Per-slot layout: 2-byte length prefix + data */
+/* Per-slot layout: 2-byte length + 1-byte flags + 1-byte fec_k_hint + data.
+ * Total header is 4 bytes so slot data stays 4-byte aligned. */
 typedef struct {
 	uint16_t length;
-	uint8_t  data[];  /* flexible array [slot_data_size] */
+	uint8_t  flags;         /* RING_SLOT_FLAG_* bits */
+	uint8_t  fec_k_hint;    /* producer-suggested FEC k (0 = no hint) */
+	uint8_t  data[];        /* flexible array [slot_data_size] */
 } venc_ring_slot_t;
+
+VENC_RING_STATIC_ASSERT(offsetof(venc_ring_slot_t, data) == 4,
+               "venc_ring_slot_t header must be exactly 4 bytes");
 
 /* Observability counters (local handle, not in SHM) */
 typedef struct {
@@ -71,7 +91,7 @@ typedef struct {
 typedef struct {
 	venc_ring_hdr_t *hdr;
 	uint8_t         *slots_base;  /* start of slot array */
-	uint32_t         slot_stride; /* sizeof(uint16_t) + slot_data_size, aligned */
+	uint32_t         slot_stride; /* sizeof(venc_ring_slot_t header) + slot_data_size, aligned */
 	uint32_t         slot_data_size;
 	uint32_t         map_size;    /* total mmap size (for munmap) */
 	int              is_owner;    /* 1 = created (will unlink), 0 = attached */
@@ -104,7 +124,8 @@ static inline venc_ring_slot_t *venc_ring_slot_at(const venc_ring_t *r,
 
 static inline int venc_ring_write(venc_ring_t *r,
     const void *hdr, uint16_t hdr_len,
-    const void *payload, uint16_t payload_len)
+    const void *payload, uint16_t payload_len,
+    uint8_t flags, uint8_t fec_k_hint)
 {
 	uint32_t total = (uint32_t)hdr_len + (uint32_t)payload_len;
 	if (total > r->slot_data_size) {
@@ -123,6 +144,8 @@ static inline int venc_ring_write(venc_ring_t *r,
 	uint32_t idx = (uint32_t)(w & (r->hdr->slot_count - 1));
 	venc_ring_slot_t *slot = venc_ring_slot_at(r, idx);
 	slot->length = (uint16_t)total;
+	slot->flags = flags;
+	slot->fec_k_hint = fec_k_hint;
 	if (hdr_len)
 		memcpy(slot->data, hdr, hdr_len);
 	if (payload_len)
@@ -144,8 +167,12 @@ static inline int venc_ring_write(venc_ring_t *r,
 /* ── Inline read (consumer) ──────────────────────────────────────────── */
 
 static inline int venc_ring_read(venc_ring_t *r,
-    void *buf, uint16_t buf_size, uint16_t *out_len)
+    void *buf, uint16_t buf_size, uint16_t *out_len, uint8_t *out_flags,
+    uint8_t *out_fec_k_hint)
 {
+	if (out_flags) *out_flags = 0;
+	if (out_fec_k_hint) *out_fec_k_hint = 0;
+
 	uint64_t rd = __atomic_load_n(&r->hdr->read_idx, __ATOMIC_RELAXED);
 	uint64_t w = __atomic_load_n(&r->hdr->write_idx, __ATOMIC_ACQUIRE);
 
@@ -156,6 +183,8 @@ static inline int venc_ring_read(venc_ring_t *r,
 	venc_ring_slot_t *slot = venc_ring_slot_at(r, idx);
 
 	uint16_t len = slot->length;
+	uint8_t flags = slot->flags;
+	uint8_t fec_k_hint = slot->fec_k_hint;
 
 	/* Validate slot length against slot_data_size */
 	if (len > r->slot_data_size) {
@@ -169,6 +198,8 @@ static inline int venc_ring_read(venc_ring_t *r,
 
 	memcpy(buf, slot->data, len);
 	if (out_len) *out_len = len;
+	if (out_flags) *out_flags = flags;
+	if (out_fec_k_hint) *out_fec_k_hint = fec_k_hint;
 
 	__atomic_store_n(&r->hdr->read_idx, rd + 1, __ATOMIC_RELEASE);
 	r->stats.reads++;
@@ -177,10 +208,12 @@ static inline int venc_ring_read(venc_ring_t *r,
 
 /* Blocking read with futex wait (consumer). timeout_ms <= 0 = infinite. */
 static inline int venc_ring_read_wait(venc_ring_t *r,
-    void *buf, uint16_t buf_size, uint16_t *out_len, int timeout_ms)
+    void *buf, uint16_t buf_size, uint16_t *out_len, uint8_t *out_flags,
+    uint8_t *out_fec_k_hint, int timeout_ms)
 {
 	for (;;) {
-		if (venc_ring_read(r, buf, buf_size, out_len) == 0)
+		if (venc_ring_read(r, buf, buf_size, out_len, out_flags,
+		    out_fec_k_hint) == 0)
 			return 0;
 
 #ifdef __linux__
@@ -203,12 +236,49 @@ static inline int venc_ring_read_wait(venc_ring_t *r,
 		usleep(1000);
 #endif
 		/* Re-check after wake */
-		if (venc_ring_read(r, buf, buf_size, out_len) == 0)
+		if (venc_ring_read(r, buf, buf_size, out_len, out_flags,
+		    out_fec_k_hint) == 0)
 			return 0;
 
 		if (timeout_ms > 0)
 			return -1;  /* timeout */
 	}
+}
+
+/* ── Lightweight epoch probe (consumer) ──────────────────────────────── */
+
+/* Open the SHM name, read just the header prefix, and return the epoch
+ * if the ring looks valid (correct magic + init_complete == 1).
+ * Returns 0 on any failure.  Costs 3 syscalls, no mmap/allocation. */
+static inline uint32_t venc_ring_probe_epoch(const char *shm_name)
+{
+	if (!shm_name || !shm_name[0])
+		return 0;
+
+	char name[256];
+	if (shm_name[0] == '/')
+		snprintf(name, sizeof(name), "%s", shm_name);
+	else
+		snprintf(name, sizeof(name), "/%s", shm_name);
+
+	int fd = shm_open(name, O_RDONLY, 0);
+	if (fd < 0)
+		return 0;
+
+	/* Read magic(4) + version(4) + slot_count(4) + slot_data_size(4) +
+	 * total_size(4) + epoch(4) + init_complete(4) = 28 bytes */
+	uint32_t hdr[7];
+	ssize_t n = read(fd, hdr, sizeof(hdr));
+	close(fd);
+
+	if (n != (ssize_t)sizeof(hdr))
+		return 0;
+	if (hdr[0] != VENC_RING_MAGIC)
+		return 0;
+	if (hdr[6] != 1)  /* init_complete */
+		return 0;
+
+	return hdr[5];  /* epoch */
 }
 
 #endif /* VENC_RING_H */

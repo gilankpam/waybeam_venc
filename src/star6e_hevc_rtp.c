@@ -32,8 +32,15 @@ static int star6e_hevc_rtp_write(const uint8_t *header, size_t header_len,
 	const uint8_t *payload1, size_t payload1_len,
 	const uint8_t *payload2, size_t payload2_len, void *opaque)
 {
-	return star6e_output_send_rtp_parts(opaque, header, header_len,
-		payload1, payload1_len, payload2, payload2_len);
+	Star6eOutput *output = (Star6eOutput *)opaque;
+	uint8_t flags = 0;
+	/* RTP marker bit (header byte 1, bit 7) = last packet of frame. */
+	if (header_len >= 2 && (header[1] & 0x80))
+		flags |= RING_SLOT_FLAG_EOF;
+	flags |= output->ring_slot_extra_flags;
+	return star6e_output_send_rtp_parts(output, header, header_len,
+		payload1, payload1_len, payload2, payload2_len, flags,
+		output->ring_slot_fec_k_hint);
 }
 
 static void hevc_ap_reset(HevcApBuilder *ap)

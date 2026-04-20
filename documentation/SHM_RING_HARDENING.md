@@ -88,3 +88,22 @@ New tests:
 ## Build Verification
 
 All 329 tests pass under `make test`, `make test-asan`, and `make test-tsan`.
+
+## V3 Addendum — Per-Slot Flags Byte
+
+Bumped `VENC_RING_VERSION` to 3. The slot header grew from 2 bytes
+(`length`) to 4 bytes (`length`, `flags`, `_reserved`), keeping data
+4-byte aligned. The producer must write `_reserved = 0`.
+
+| Field | Purpose |
+|-------|---------|
+| `flags` | Bitfield of `RING_SLOT_FLAG_*`. `RING_SLOT_FLAG_EOF = 0x01` marks the last RTP packet of a video frame (derived from RTP marker bit). |
+| `_reserved` | Reserved for future metadata (frame_type, temporal_id, etc.). Must be zero on write. |
+
+`venc_ring_write()` gained a trailing `uint8_t flags` parameter.
+`venc_ring_read()` / `venc_ring_read_wait()` gained a trailing
+`uint8_t *out_flags` parameter (nullable).
+
+The version bump forces lockstep deployment: old wfb_tx refuses to
+attach to a V3 ring and logs "Failed to attach to SHM ring", which is
+the intended backward-compat failure mode.

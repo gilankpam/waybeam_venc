@@ -201,6 +201,27 @@ SHM input mode: reading from ring 'venc_wfb'
 (`venc_ring_create`) and attached by wfb_tx (`venc_ring_attach`). If wfb_tx
 starts first, it will fail with "Failed to attach to SHM ring".
 
+## Frame-aware FEC flush (V3)
+
+The SHM ring protocol is at version **V3**. Each slot carries a one-byte
+`flags` field in addition to `length`. The producer sets
+`RING_SLOT_FLAG_EOF` on the final RTP packet of every video frame
+(derived from the RTP marker bit). On receiving an EoF slot, the patched
+wfb_tx closes the current FEC block immediately via
+`send_packet(NULL, 0, WFB_PACKET_FEC_ONLY)`, so parity emits at the frame
+boundary instead of waiting for the next frame's packets to fill the
+block. At 60 FPS with `k=8`, this cuts per-frame parity emission delay
+by ~8-15 ms and keeps each IDR's FEC blocks self-contained (no
+straddling into the following P-frame).
+
+The `fec_timeout` timer path is retained as a safety net: if the final
+packet of a frame is ever dropped before reaching wfb_tx, the timer
+still closes the stale block.
+
+**Deploy venc and wfb_tx together.** V3 is not wire-compatible with
+V2 — old wfb_tx attaching to a V3 ring will fail cleanly with "Failed
+to attach to SHM ring" (clean rejection, no corruption).
+
 Recommended init script order:
 
 ```bash
@@ -242,7 +263,7 @@ wfb_tx -u 5600 -K /etc/drone.key -k 8 -n 12 -p 0 wlan0
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `Failed to attach to SHM ring` | venc not running or wrong name | Start venc first; check `ls /dev/shm/` |
+| `Failed to attach to SHM ring` | venc not running, wrong name, or V2/V3 mismatch | Start venc first; check `ls /dev/shm/`; redeploy both binaries together |
 | `ring FULL` (lag=512) | wfb_tx not consuming fast enough | Check wfb_tx is running; reduce bitrate or FEC overhead |
 | High lag but not full | Momentary burst; should recover | Normal during keyframes; monitor over time |
 | `shm_ring_stats` shows `write_idx=0` | venc not encoding | Check venc logs; verify sensor/ISP init |

@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,10 +10,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* Slot stride: length prefix (2) + data, aligned to 8 bytes */
+/* Slot stride: slot header (length + flags + reserved) + data, aligned to 8 bytes */
 static uint32_t calc_slot_stride(uint32_t slot_data_size)
 {
-	uint32_t raw = (uint32_t)sizeof(uint16_t) + slot_data_size;
+	uint32_t raw = (uint32_t)offsetof(venc_ring_slot_t, data) + slot_data_size;
 	return (raw + 7u) & ~7u;
 }
 
@@ -50,7 +51,14 @@ venc_ring_t *venc_ring_create(const char *shm_name, uint32_t slot_count,
 	else
 		snprintf(name, sizeof(name), "/%s", shm_name);
 
-	int fd = shm_open(name, O_CREAT | O_RDWR | O_TRUNC, 0666);
+	/* Unlink first, then create fresh.  The old inode (and consumer
+	 * mmaps of it) survives until all references are released — this
+	 * avoids SIGBUS when the consumer still holds a mapping. */
+	if (shm_unlink(name) != 0 && errno != ENOENT)
+		fprintf(stderr, "[venc_ring] shm_unlink(%s) warning: %s\n",
+		        name, strerror(errno));
+
+	int fd = shm_open(name, O_CREAT | O_RDWR | O_EXCL, 0666);
 	if (fd < 0) {
 		fprintf(stderr, "[venc_ring] shm_open(%s) failed: %s\n",
 		        name, strerror(errno));

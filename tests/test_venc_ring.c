@@ -12,6 +12,9 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <errno.h>
 
 #include "venc_ring.h"
 #include "test_helpers.h"
@@ -82,11 +85,11 @@ static int test_attach(void)
 
 	/* Write via producer, read via consumer to prove shared memory */
 	uint8_t data[4] = {0xDE, 0xAD, 0xBE, 0xEF};
-	int ret = venc_ring_write(producer, data, 4, NULL, 0);
+	int ret = venc_ring_write(producer, data, 4, NULL, 0, 0, 0);
 	CHECK("att_cross_write", ret == 0);
 	uint8_t buf[32];
 	uint16_t out_len;
-	ret = venc_ring_read(consumer, buf, sizeof(buf), &out_len);
+	ret = venc_ring_read(consumer, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("att_cross_read", ret == 0);
 	CHECK("att_cross_data", memcmp(buf, data, 4) == 0);
 
@@ -113,21 +116,83 @@ static int test_write_read(void)
 	uint8_t payload[20];
 	memset(payload, 0xAB, sizeof(payload));
 
-	int ret = venc_ring_write(r, hdr, 12, payload, 20);
+	int ret = venc_ring_write(r, hdr, 12, payload, 20, 0, 0);
 	CHECK("wr_write_ok", ret == 0);
 
 	/* Read it back */
 	uint8_t buf[64];
 	uint16_t out_len = 0;
-	ret = venc_ring_read(r, buf, sizeof(buf), &out_len);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("wr_read_ok", ret == 0);
 	CHECK("wr_read_len", out_len == 32);
 	CHECK("wr_read_hdr", memcmp(buf, hdr, 12) == 0);
 	CHECK("wr_read_payload", buf[12] == 0xAB && buf[31] == 0xAB);
 
 	/* Ring should be empty now */
-	ret = venc_ring_read(r, buf, sizeof(buf), &out_len);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("wr_empty", ret == -1);
+
+	venc_ring_destroy(r);
+	return failures;
+}
+
+/* ── Slot flags: EoF round-trip and reserved byte ─────────────────── */
+
+static int test_slot_flags(void)
+{
+	int failures = 0;
+
+	venc_ring_t *r = venc_ring_create("test_flags", 4, 64);
+	CHECK("flags_create", r != NULL);
+
+	uint8_t hdr[12] = {0};
+	uint8_t payload[8] = {0};
+
+	/* Write without flags */
+	CHECK("flags_write_plain",
+	      venc_ring_write(r, hdr, 12, payload, 8, 0, 0) == 0);
+	/* Write with EoF */
+	CHECK("flags_write_eof",
+	      venc_ring_write(r, hdr, 12, payload, 8, RING_SLOT_FLAG_EOF, 0) == 0);
+
+	uint8_t buf[64];
+	uint16_t out_len = 0;
+	uint8_t flags = 0xFF;
+
+	/* First packet: no flags */
+	int ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &flags, NULL);
+	CHECK("flags_read_plain_ok", ret == 0);
+	CHECK("flags_read_plain_flags", flags == 0);
+
+	/* Second packet: EoF */
+	flags = 0xFF;
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &flags, NULL);
+	CHECK("flags_read_eof_ok", ret == 0);
+	CHECK("flags_read_eof_flags", flags == RING_SLOT_FLAG_EOF);
+
+	/* Empty ring: out_flags must be zeroed */
+	flags = 0xFF;
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, &flags, NULL);
+	CHECK("flags_read_empty_ret", ret == -1);
+	CHECK("flags_read_empty_flags_zeroed", flags == 0);
+
+	/* fec_k_hint round-trip: write with hint=7, read back */
+	CHECK("hint_write_ok",
+	      venc_ring_write(r, hdr, 12, payload, 8, RING_SLOT_FLAG_EOF, 7) == 0);
+	uint64_t w = __atomic_load_n(&r->hdr->write_idx, __ATOMIC_ACQUIRE);
+	uint32_t idx = (uint32_t)((w - 1) & (r->hdr->slot_count - 1));
+	venc_ring_slot_t *slot = venc_ring_slot_at(r, idx);
+	CHECK("hint_slot_byte_set", slot->fec_k_hint == 7);
+	uint8_t read_hint = 0xFF;
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, &read_hint);
+	CHECK("hint_read_ok", ret == 0);
+	CHECK("hint_read_value", read_hint == 7);
+
+	/* NULL out_flags and NULL out_fec_k_hint must not crash */
+	CHECK("hint_write_zero",
+	      venc_ring_write(r, hdr, 12, payload, 8, RING_SLOT_FLAG_EOF, 0) == 0);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
+	CHECK("flags_read_null_out_flags", ret == 0);
 
 	venc_ring_destroy(r);
 	return failures;
@@ -146,11 +211,11 @@ static int test_write_overflow(void)
 	memset(big, 0xFF, sizeof(big));
 
 	/* Total exceeds slot_data_size → should fail */
-	int ret = venc_ring_write(r, big, 20, big, 20);
+	int ret = venc_ring_write(r, big, 20, big, 20, 0, 0);
 	CHECK("of_too_large", ret == -1);
 
 	/* Exactly at limit should succeed */
-	ret = venc_ring_write(r, big, 16, big, 16);
+	ret = venc_ring_write(r, big, 16, big, 16, 0, 0);
 	CHECK("of_exact_fit", ret == 0);
 
 	venc_ring_destroy(r);
@@ -171,26 +236,26 @@ static int test_fill_drain(void)
 	/* Fill all 4 slots */
 	for (int i = 0; i < 4; i++) {
 		memset(data, (uint8_t)i, sizeof(data));
-		int ret = venc_ring_write(r, data, sizeof(data), NULL, 0);
+		int ret = venc_ring_write(r, data, sizeof(data), NULL, 0, 0, 0);
 		CHECK("fd_fill", ret == 0);
 	}
 
 	/* 5th write should fail (ring full) */
-	int ret = venc_ring_write(r, data, sizeof(data), NULL, 0);
+	int ret = venc_ring_write(r, data, sizeof(data), NULL, 0, 0, 0);
 	CHECK("fd_full", ret == -1);
 
 	/* Drain all 4 and verify ordering */
 	uint8_t buf[32];
 	uint16_t out_len;
 	for (int i = 0; i < 4; i++) {
-		ret = venc_ring_read(r, buf, sizeof(buf), &out_len);
+		ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 		CHECK("fd_drain_ok", ret == 0);
 		CHECK("fd_drain_len", out_len == 8);
 		CHECK("fd_drain_data", buf[0] == (uint8_t)i);
 	}
 
 	/* Should be empty */
-	ret = venc_ring_read(r, buf, sizeof(buf), &out_len);
+	ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("fd_empty", ret == -1);
 
 	venc_ring_destroy(r);
@@ -213,10 +278,10 @@ static int test_wraparound(void)
 	/* Write and read 10 times (wraps around 4-slot ring multiple times) */
 	for (int i = 0; i < 10; i++) {
 		memset(data, (uint8_t)i, sizeof(data));
-		int ret = venc_ring_write(r, data, sizeof(data), NULL, 0);
+		int ret = venc_ring_write(r, data, sizeof(data), NULL, 0, 0, 0);
 		CHECK("wrap_write", ret == 0);
 
-		ret = venc_ring_read(r, buf, sizeof(buf), &out_len);
+		ret = venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 		CHECK("wrap_read", ret == 0);
 		CHECK("wrap_data", buf[0] == (uint8_t)i);
 	}
@@ -246,7 +311,7 @@ static void *producer_thread(void *arg)
 		/* Encode sequence number in header */
 		hdr[0] = (uint8_t)(i & 0xFF);
 		hdr[1] = (uint8_t)((i >> 8) & 0xFF);
-		while (venc_ring_write(ta->ring, hdr, 4, NULL, 0) != 0) {
+		while (venc_ring_write(ta->ring, hdr, 4, NULL, 0, 0, 0) != 0) {
 			/* Ring full — spin briefly */
 			usleep(1);
 		}
@@ -261,7 +326,7 @@ static void *consumer_thread(void *arg)
 	uint16_t out_len;
 	int expected = 0;
 	for (int i = 0; i < CONCURRENT_COUNT; i++) {
-		while (venc_ring_read(ta->ring, buf, sizeof(buf), &out_len) != 0) {
+		while (venc_ring_read(ta->ring, buf, sizeof(buf), &out_len, NULL, NULL) != 0) {
 			usleep(1);
 		}
 		int seq = buf[0] | (buf[1] << 8);
@@ -302,19 +367,20 @@ static int test_stride_alignment(void)
 {
 	int failures = 0;
 
-	/* slot_data_size=13 → raw = 2+13=15, aligned to 16 */
-	venc_ring_t *r = venc_ring_create("test_align", 4, 13);
+	/* slot header is 4 bytes: length(2) + flags(1) + reserved(1) */
+	/* slot_data_size=12 → raw = 4+12=16, aligned to 16 */
+	venc_ring_t *r = venc_ring_create("test_align", 4, 12);
 	CHECK("align_create", r != NULL);
 	CHECK("align_stride_16", r->slot_stride == 16);
 	venc_ring_destroy(r);
 
-	/* slot_data_size=14 → raw = 2+14=16, aligned to 16 */
-	r = venc_ring_create("test_align2", 4, 14);
+	/* slot_data_size=13 → raw = 4+13=17, aligned to 24 */
+	r = venc_ring_create("test_align2", 4, 13);
 	CHECK("align2_create", r != NULL);
-	CHECK("align2_stride_16", r->slot_stride == 16);
+	CHECK("align2_stride_24", r->slot_stride == 24);
 	venc_ring_destroy(r);
 
-	/* slot_data_size=1400 → raw = 2+1400=1402, aligned to 1408 */
+	/* slot_data_size=1400 → raw = 4+1400=1404, aligned to 1408 */
 	r = venc_ring_create("test_align3", 4, 1400);
 	CHECK("align3_create", r != NULL);
 	CHECK("align3_stride_1408", r->slot_stride == 1408);
@@ -377,7 +443,7 @@ static int test_corrupt_slot_length(void)
 	/* Write a valid packet */
 	uint8_t data[16];
 	memset(data, 0xAA, sizeof(data));
-	int ret = venc_ring_write(producer, data, 16, NULL, 0);
+	int ret = venc_ring_write(producer, data, 16, NULL, 0, 0, 0);
 	CHECK("corrupt_slot_write", ret == 0);
 
 	/* Manually corrupt the slot length to exceed slot_data_size */
@@ -390,7 +456,7 @@ static int test_corrupt_slot_length(void)
 
 	uint8_t buf[128];
 	uint16_t out_len = 0;
-	ret = venc_ring_read(consumer, buf, sizeof(buf), &out_len);
+	ret = venc_ring_read(consumer, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("corrupt_slot_read_fail", ret == -1);
 	CHECK("corrupt_slot_bad_drops", consumer->stats.bad_slot_drops == 1);
 
@@ -456,23 +522,23 @@ static int test_stats_counters(void)
 	/* Oversize write → oversize_drops */
 	uint8_t big[64];
 	memset(big, 0xFF, sizeof(big));
-	venc_ring_write(r, big, 32, big, 16);  /* 48 > 32 */
+	venc_ring_write(r, big, 32, big, 16, 0, 0);  /* 48 > 32 */
 	CHECK("stats_oversize", r->stats.oversize_drops == 1);
 
 	/* Normal writes (fill 2 slots) */
-	venc_ring_write(r, data, 8, NULL, 0);
-	venc_ring_write(r, data, 8, NULL, 0);
+	venc_ring_write(r, data, 8, NULL, 0, 0, 0);
+	venc_ring_write(r, data, 8, NULL, 0, 0, 0);
 	CHECK("stats_writes", r->stats.writes == 2);
 
 	/* Full drop */
-	venc_ring_write(r, data, 8, NULL, 0);
+	venc_ring_write(r, data, 8, NULL, 0, 0, 0);
 	CHECK("stats_full_drop", r->stats.full_drops == 1);
 
 	/* Read 2 packets */
 	uint8_t buf[64];
 	uint16_t out_len;
-	venc_ring_read(r, buf, sizeof(buf), &out_len);
-	venc_ring_read(r, buf, sizeof(buf), &out_len);
+	venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
+	venc_ring_read(r, buf, sizeof(buf), &out_len, NULL, NULL);
 	CHECK("stats_reads", r->stats.reads == 2);
 
 	venc_ring_destroy(r);
@@ -492,18 +558,18 @@ static int test_write_u16_overflow(void)
 	 * but total is computed as uint32_t, so it correctly exceeds slot_data_size
 	 * and is rejected */
 	uint8_t dummy[1] = {0};
-	int ret = venc_ring_write(r, NULL, 0, dummy, 1);
+	int ret = venc_ring_write(r, NULL, 0, dummy, 1, 0, 0);
 	CHECK("u16ov_small_ok", ret == 0);
 
 	/* This should succeed: exactly at limit */
 	uint8_t *big = (uint8_t *)calloc(1, 65535);
 	CHECK("u16ov_alloc", big != NULL);
 	if (big) {
-		ret = venc_ring_write(r, big, 65535, NULL, 0);
+		ret = venc_ring_write(r, big, 65535, NULL, 0, 0, 0);
 		CHECK("u16ov_max_ok", ret == 0);
 
 		/* This should fail: 65535 + 1 = 65536 > 65535 */
-		ret = venc_ring_write(r, big, 65535, dummy, 1);
+		ret = venc_ring_write(r, big, 65535, dummy, 1, 0, 0);
 		CHECK("u16ov_exceed_fail", ret == -1);
 		free(big);
 	}
@@ -546,6 +612,166 @@ static int test_destroy_clears_init(void)
 	return failures;
 }
 
+/* ── Epoch probe ───────────────────────────────────────────────────── */
+
+static int test_probe_epoch(void)
+{
+	int failures = 0;
+
+	venc_ring_t *r = venc_ring_create("test_probe", 4, 1400);
+	CHECK("probe_create", r != NULL);
+
+	/* Probe should return the same epoch as the ring header */
+	uint32_t probed = venc_ring_probe_epoch("test_probe");
+	CHECK("probe_matches", probed == r->hdr->epoch);
+	CHECK("probe_nonzero", probed != 0);
+
+	/* Clear init_complete — probe should return 0 (not ready) */
+	__atomic_store_n(&r->hdr->init_complete, 0, __ATOMIC_RELEASE);
+	CHECK("probe_not_ready", venc_ring_probe_epoch("test_probe") == 0);
+	__atomic_store_n(&r->hdr->init_complete, 1, __ATOMIC_RELEASE);
+
+	/* Destroy — probe should return 0 (SHM unlinked) */
+	venc_ring_destroy(r);
+	CHECK("probe_after_destroy", venc_ring_probe_epoch("test_probe") == 0);
+
+	/* Non-existent name */
+	CHECK("probe_missing", venc_ring_probe_epoch("test_no_such_ring") == 0);
+
+	/* NULL / empty */
+	CHECK("probe_null", venc_ring_probe_epoch(NULL) == 0);
+	CHECK("probe_empty", venc_ring_probe_epoch("") == 0);
+
+	return failures;
+}
+
+/* ── Epoch changes on recreate (unlink + O_EXCL) ──────────────────── */
+
+static int test_probe_epoch_restart(void)
+{
+	int failures = 0;
+
+	venc_ring_t *r1 = venc_ring_create("test_epoch_rst", 4, 1400);
+	CHECK("epoch_rst_create1", r1 != NULL);
+	uint32_t epoch1 = r1->hdr->epoch;
+
+	/* Destroy (unlinks SHM) */
+	venc_ring_destroy(r1);
+
+	/* Small delay to ensure monotonic clock advances at least 1ms */
+	usleep(2000);
+
+	/* Re-create — new epoch from CLOCK_MONOTONIC */
+	venc_ring_t *r2 = venc_ring_create("test_epoch_rst", 4, 1400);
+	CHECK("epoch_rst_create2", r2 != NULL);
+	uint32_t epoch2 = r2->hdr->epoch;
+
+	CHECK("epoch_rst_different", epoch1 != epoch2);
+
+	/* Probe should see the new epoch */
+	uint32_t probed = venc_ring_probe_epoch("test_epoch_rst");
+	CHECK("epoch_rst_probe", probed == epoch2);
+
+	venc_ring_destroy(r2);
+	return failures;
+}
+
+/* ── SIGBUS safety: old consumer mmap survives producer recreate ──── */
+
+static int test_create_no_sigbus(void)
+{
+	int failures = 0;
+
+	venc_ring_t *producer = venc_ring_create("test_sigbus", 4, 1400);
+	CHECK("sigbus_create", producer != NULL);
+	uint32_t epoch1 = producer->hdr->epoch;
+
+	/* Attach a consumer — gets its own mmap */
+	venc_ring_t *consumer = venc_ring_attach("test_sigbus");
+	CHECK("sigbus_attach", consumer != NULL);
+
+	/* Fork: child holds the consumer mmap, parent recreates the SHM.
+	 * With O_TRUNC this would SIGBUS the child.
+	 * With unlink+O_EXCL the child's mmap stays valid. */
+	pid_t pid = fork();
+	if (pid == 0) {
+		/* Child: wait for parent to recreate, then access old mmap */
+		usleep(50000);  /* 50ms — parent should have recreated by now */
+
+		/* Access the old mmap — should NOT SIGBUS.
+		 * With the old O_TRUNC approach, this line would crash. */
+		uint32_t ic = __atomic_load_n(&consumer->hdr->init_complete, __ATOMIC_ACQUIRE);
+		(void)ic;
+
+		/* Also verify epoch is still the OLD one (different inode) */
+		uint32_t old_epoch = consumer->hdr->epoch;
+		_exit(old_epoch == epoch1 ? 0 : 1);
+	}
+
+	/* Parent: destroy old producer, recreate with new SHM inode */
+	venc_ring_destroy(producer);
+	usleep(2000);  /* ensure clock advances */
+	venc_ring_t *producer2 = venc_ring_create("test_sigbus", 4, 1400);
+	CHECK("sigbus_recreate", producer2 != NULL);
+
+	/* Wait for child */
+	int status = 0;
+	waitpid(pid, &status, 0);
+
+	if (WIFSIGNALED(status)) {
+		int sig = WTERMSIG(status);
+		printf("  FAIL  sigbus_child_signal (killed by signal %d%s)\n",
+		       sig, sig == SIGBUS ? " SIGBUS" : "");
+		failures++;
+		g_test_fail_count++;
+	} else if (WIFEXITED(status)) {
+		int code = WEXITSTATUS(status);
+		CHECK("sigbus_child_ok", code == 0);
+	} else {
+		printf("  FAIL  sigbus_child_unknown_status\n");
+		failures++;
+		g_test_fail_count++;
+	}
+
+	venc_ring_destroy(consumer);
+	venc_ring_destroy(producer2);
+	return failures;
+}
+
+/* ── O_EXCL: two creates race ─────────────────────────────────────── */
+
+static int test_create_exclusive(void)
+{
+	int failures = 0;
+
+	/* Clean slate */
+	shm_unlink("/test_excl");
+
+	venc_ring_t *r1 = venc_ring_create("test_excl", 4, 1400);
+	CHECK("excl_first", r1 != NULL);
+	uint32_t epoch1 = r1->hdr->epoch;
+
+	/* Second create from same process: unlinks first, creates new.
+	 * The old r1 mmap still points to the old (now unlinked) inode. */
+	usleep(2000);
+	venc_ring_t *r2 = venc_ring_create("test_excl", 4, 1400);
+	CHECK("excl_second_ok", r2 != NULL);
+	CHECK("excl_new_epoch", r2->hdr->epoch != epoch1);
+
+	/* Old consumer mmap (r1) still readable — old inode persists */
+	CHECK("excl_old_still_valid", r1->hdr->magic == VENC_RING_MAGIC);
+
+	venc_ring_destroy(r1);
+	venc_ring_destroy(r2);
+
+	/* After destroy, create should succeed again */
+	venc_ring_t *r3 = venc_ring_create("test_excl", 4, 1400);
+	CHECK("excl_after_destroy", r3 != NULL);
+	venc_ring_destroy(r3);
+
+	return failures;
+}
+
 /* ── Entry point ────────────────────────────────────────────────────── */
 
 int test_venc_ring(void)
@@ -556,6 +782,7 @@ int test_venc_ring(void)
 	failures += test_create_validation();
 	failures += test_attach();
 	failures += test_write_read();
+	failures += test_slot_flags();
 	failures += test_write_overflow();
 	failures += test_fill_drain();
 	failures += test_wraparound();
@@ -568,6 +795,10 @@ int test_venc_ring(void)
 	failures += test_stats_counters();
 	failures += test_write_u16_overflow();
 	failures += test_destroy_clears_init();
+	failures += test_probe_epoch();
+	failures += test_probe_epoch_restart();
+	failures += test_create_no_sigbus();
+	failures += test_create_exclusive();
 
 	return failures;
 }

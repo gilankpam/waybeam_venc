@@ -34,6 +34,8 @@ typedef struct {
 	venc_ring_t *ring;
 	uint32_t send_errors;
 	uint32_t transport_gen; /* seqlock: odd = write in progress, even = stable */
+	uint8_t ring_slot_extra_flags;   /* ORed into every ring slot's flags field */
+	uint8_t ring_slot_fec_k_hint;    /* Stamped into every ring slot's fec_k_hint */
 } Star6eOutput;
 
 typedef struct {
@@ -77,11 +79,14 @@ int star6e_output_is_rtp(const Star6eOutput *output);
 int star6e_output_is_shm(const Star6eOutput *output);
 
 /** Send RTP header and payload parts as a single UDP datagram.
- *  payload2 may be NULL/0 for single-part payloads. */
+ *  payload2 may be NULL/0 for single-part payloads.
+ *  flags: RING_SLOT_FLAG_* bits for SHM path (ignored on socket path).
+ *  fec_k_hint: producer-suggested FEC k for SHM path (0 = no hint). */
 int star6e_output_send_rtp_parts(Star6eOutput *output,
 	const uint8_t *header, size_t header_len,
 	const uint8_t *payload1, size_t payload1_len,
-	const uint8_t *payload2, size_t payload2_len);
+	const uint8_t *payload2, size_t payload2_len,
+	uint8_t flags, uint8_t fec_k_hint);
 
 /** Return and reset accumulated send error count. */
 uint32_t star6e_output_drain_send_errors(Star6eOutput *output);
